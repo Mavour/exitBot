@@ -8,12 +8,11 @@ import { log, logError } from "./logger";
 
 function printBanner(): void {
   const pubkey = wallet.publicKey.toBase58();
-  const truncated = pubkey.slice(0, 4) + "..." + pubkey.slice(-4);
-  const mode = CONFIG.dryRun ? "DRY RUN" : "LIVE";
-  const line = "║".padEnd(36, " ") + "║";
+  const truncated = pubkey.slice(0, 8) + "..." + pubkey.slice(-4);
+  const mode = CONFIG.dryRun ? "[DRY RUN]" : "[LIVE]";
 
   console.log("╔════════════════════════════════════╗");
-  console.log("║     DLMM EXIT AGENT v1.0.0         ║");
+  console.log("║     DLMM EXIT AGENT v2.0.0        ║");
   console.log(`║  Wallet: ${truncated.padEnd(21)}║`);
   console.log(`║  Mode: ${mode.padEnd(24)}║`);
   console.log("╚════════════════════════════════════╝");
@@ -26,6 +25,7 @@ async function main(): Promise<void> {
     mode: CONFIG.dryRun ? "DRY RUN" : "LIVE",
     pollIntervalMs: CONFIG.pollIntervalMs,
     rsiPeriod: CONFIG.rsiPeriod,
+    rsiSmoothingLength: CONFIG.rsiSmoothingLength,
     rsiThreshold: CONFIG.rsiThreshold,
     bbPeriod: CONFIG.bbPeriod,
     bbStdDev: CONFIG.bbStdDev,

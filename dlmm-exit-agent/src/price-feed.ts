@@ -26,10 +26,20 @@ interface DexScreenerPair {
   baseToken: { address: string; name: string; symbol: string };
   quoteToken: { address: string; name: string; symbol: string };
   priceUsd: string;
-  txns: Record<string, unknown>;
-  volume: Record<string, unknown>;
+  txns: {
+    h24: number;
+    h6: number;
+    h1: number;
+    m5: number;
+  };
+  volume: {
+    h24: number;
+    h6: number;
+    h1: number;
+    m5: number;
+  };
   priceChange: Record<string, unknown>;
-  liquidity: Record<string, unknown>;
+  liquidity: { usd: number };
   fdv: number;
   marketCap: number;
   pairCreatedAt: number;
@@ -116,7 +126,6 @@ export async function getCandles15m(
     );
   }
 
-  // Take only last `limit` candles and sort oldest → newest
   const slices = data.pairs.slice(-limit);
 
   const candles: Candle[] = slices.map((entry) => ({
@@ -132,8 +141,7 @@ export async function getCandles15m(
 }
 
 export async function getDexScreenerPairFromMints(
-  baseTokenMint: string,
-  quoteTokenMint: string
+  baseTokenMint: string
 ): Promise<string> {
   const url = `https://api.dexscreener.com/latest/dex/search?q=${baseTokenMint}`;
 
@@ -144,32 +152,34 @@ export async function getDexScreenerPairFromMints(
     throw new Error(`No DexScreener pairs found for token ${baseTokenMint}`);
   }
 
-  // Find a Solana Meteora pair matching both mints
-  for (const pair of data.pairs) {
-    if (pair.chainId !== "solana") continue;
-    if (
-      pair.baseToken.address.toLowerCase() === baseTokenMint.toLowerCase() &&
-      pair.quoteToken.address.toLowerCase() === quoteTokenMint.toLowerCase()
-    ) {
-      log("INFO", `Found DexScreener pair`, {
-        pairAddress: pair.pairAddress,
-        baseSymbol: pair.baseToken.symbol,
-        quoteSymbol: pair.quoteToken.symbol,
-      });
-      return pair.pairAddress;
-    }
-  }
-
-  // Fallback: return first Solana pair
-  const solanaPair = data.pairs.find((p) => p.chainId === "solana");
-  if (solanaPair) {
-    log("WARN", "Using fallback DexScreener pair (exact mint match not found)", {
-      pairAddress: solanaPair.pairAddress,
-    });
-    return solanaPair.pairAddress;
-  }
-
-  throw new Error(
-    `No Solana DexScreener pair found for token ${baseTokenMint}`
+  // Filter: Solana chain + Meteora dex
+  const meteoraPairs = data.pairs.filter(
+    (p) => p.chainId === "solana" && p.dexId === "meteora"
   );
+
+  if (meteoraPairs.length === 0) {
+    // Fallback: use first Solana pair regardless of dex
+    const solFallback = data.pairs.find((p) => p.chainId === "solana");
+    if (solFallback) {
+      log("WARN", "No Meteora pair found, using first Solana pair as fallback", {
+        pairAddress: solFallback.pairAddress,
+        dexId: solFallback.dexId,
+      });
+      return solFallback.pairAddress;
+    }
+    throw new Error(`No Solana pairs found for token ${baseTokenMint}`);
+  }
+
+  // Pick the pair with highest 24h tx count
+  meteoraPairs.sort((a, b) => (b.txns?.h24 ?? 0) - (a.txns?.h24 ?? 0));
+  const best = meteoraPairs[0];
+
+  log("INFO", `Found DexScreener Meteora pair`, {
+    pairAddress: best.pairAddress,
+    baseSymbol: best.baseToken.symbol,
+    quoteSymbol: best.quoteToken.symbol,
+    txns24h: best.txns?.h24 ?? 0,
+  });
+
+  return best.pairAddress;
 }

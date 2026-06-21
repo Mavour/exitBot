@@ -1,4 +1,3 @@
-import { Connection, Keypair } from "@solana/web3.js";
 import { CONFIG } from "./config";
 import { connection, wallet, logWalletInfo } from "./wallet";
 import {
@@ -13,7 +12,7 @@ import { checkExitConditions } from "./indicators";
 import { executeFullExit, ExitResult } from "./exit-executor";
 import { log, logError } from "./logger";
 
-const REQUIRED_CANDLES = CONFIG.rsiPeriod + CONFIG.bbPeriod + 20;
+const REQUIRED_CANDLES = 60;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
 
@@ -23,14 +22,17 @@ interface TrackedPosition {
 }
 
 let isShuttingDown = false;
-let pollCycle = 0;
-const inFlight = new Set<string>();
+const inFlightSet = new Set<string>();
 
 function handleShutdown(): void {
   if (isShuttingDown) return;
   isShuttingDown = true;
   log("INFO", "Agent stopped by user");
   process.exit(0);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function startMonitor(): Promise<void> {
@@ -40,23 +42,18 @@ export async function startMonitor(): Promise<void> {
   await logWalletInfo();
 
   let trackedPositions: TrackedPosition[] = [];
+  let pollCycle = 0;
 
-  // Initial fetch
+  // Fetch & resolve on startup
   const initialPositions = await fetchAllActivePositions(
     wallet.publicKey,
     connection
   );
 
-  if (initialPositions.length === 0) {
-    log("WARN", "No active positions found. Agent will idle and retry.");
-  }
-
-  // Resolve DexScreener pair addresses for each position
   for (const pos of initialPositions) {
     try {
       const pairAddr = await getDexScreenerPairFromMints(
-        pos.baseTokenMint,
-        pos.quoteTokenMint
+        pos.baseTokenMint
       );
       pos.dexScreenerPairAddress = pairAddr;
     } catch (err) {
@@ -72,24 +69,21 @@ export async function startMonitor(): Promise<void> {
     state: "MONITORING" as PositionState,
   }));
 
-  log("INFO", `Starting monitor loop every ${CONFIG.pollIntervalMs}ms`, {
+  log("INFO", "Monitor started", {
     positionsCount: trackedPositions.length,
     dryRun: CONFIG.dryRun,
+    rsiPeriod: CONFIG.rsiPeriod,
+    rsiSmoothingLength: CONFIG.rsiSmoothingLength,
     rsiThreshold: CONFIG.rsiThreshold,
     bbPeriod: CONFIG.bbPeriod,
-    bbStdDev: CONFIG.bbStdDev,
   });
 
   // Main loop
-  const loop = async (): Promise<void> => {
-    if (isShuttingDown) return;
-
+  while (!isShuttingDown) {
     pollCycle++;
     log("INFO", `Poll cycle ${pollCycle}`, {
-      trackedPositions: trackedPositions.filter(
-        (t) => t.state !== "EXITED"
-      ).length,
-      inFlight: inFlight.size,
+      monitored: trackedPositions.filter((t) => t.state !== "EXITED").length,
+      inFlight: inFlightSet.size,
     });
 
     // Re-fetch position list every 10 cycles
@@ -100,17 +94,17 @@ export async function startMonitor(): Promise<void> {
         connection
       );
 
-      // Resolve pair addresses for new positions
       for (const pos of freshPositions) {
         if (
           !trackedPositions.some(
-            (t) => t.position.positionPubkey.toBase58() === pos.positionPubkey.toBase58()
+            (t) =>
+              t.position.positionPubkey.toBase58() ===
+              pos.positionPubkey.toBase58()
           )
         ) {
           try {
             const pairAddr = await getDexScreenerPairFromMints(
-              pos.baseTokenMint,
-              pos.quoteTokenMint
+              pos.baseTokenMint
             );
             pos.dexScreenerPairAddress = pairAddr;
           } catch (err) {
@@ -119,22 +113,16 @@ export async function startMonitor(): Promise<void> {
               err
             );
           }
+          trackedPositions.push({
+            position: pos,
+            state: "MONITORING",
+          });
+          log("INFO", "New position detected", {
+            positionAddress: pos.positionPubkey.toBase58(),
+          });
         }
       }
 
-      // Merge new positions
-      const existingKeys = new Set(
-        trackedPositions.map((t) => t.position.positionPubkey.toBase58())
-      );
-      for (const pos of freshPositions) {
-        const key = pos.positionPubkey.toBase58();
-        if (!existingKeys.has(key)) {
-          trackedPositions.push({ position: pos, state: "MONITORING" });
-          log("INFO", "New position detected", { positionAddress: key });
-        }
-      }
-
-      // Remove positions that are no longer active (except EXITED ones)
       const freshKeys = new Set(
         freshPositions.map((p) => p.positionPubkey.toBase58())
       );
@@ -161,16 +149,16 @@ export async function startMonitor(): Promise<void> {
       if (tracked.state === "EXITED") continue;
 
       if (tracked.state === "MONITORING") {
-        if (inFlight.has(posKey)) continue;
+        if (inFlightSet.has(posKey)) continue;
 
         if (!pos.dexScreenerPairAddress) {
-          log("WARN", "No DexScreener pair address for position, skipping", {
+          log("WARN", "No DexScreener pair address, skipping", {
             positionAddress: posKey,
           });
           continue;
         }
 
-        inFlight.add(posKey);
+        inFlightSet.add(posKey);
 
         try {
           const candles = await getCandles15m(
@@ -178,23 +166,23 @@ export async function startMonitor(): Promise<void> {
             REQUIRED_CANDLES
           );
 
-          const conditions = checkExitConditions(candles);
+          const snapshot = checkExitConditions(candles);
 
           log("INFO", `Position ${posKey.slice(0, 8)}...`, {
-            rsi: conditions.rsi.toFixed(2),
-            bbUpper: conditions.bb.upper.toFixed(8),
-            bbMiddle: conditions.bb.middle.toFixed(8),
-            bbLower: conditions.bb.lower.toFixed(8),
-            price: conditions.price.toFixed(8),
-            shouldExit: conditions.shouldExit,
+            smoothedRsi: snapshot.smoothedRsi.toFixed(2),
+            bbUpper: snapshot.bb.upper.toFixed(8),
+            bbMiddle: snapshot.bb.middle.toFixed(8),
+            bbLower: snapshot.bb.lower.toFixed(8),
+            price: snapshot.price.toFixed(8),
+            shouldExit: snapshot.shouldExit,
           });
 
-          if (conditions.shouldExit) {
+          if (snapshot.shouldExit) {
             log("EXIT", "EXIT CONDITIONS MET", {
               positionAddress: posKey,
-              rsi: conditions.rsi.toFixed(2),
-              price: conditions.price.toFixed(8),
-              bbUpper: conditions.bb.upper.toFixed(8),
+              smoothedRsi: snapshot.smoothedRsi.toFixed(2),
+              price: snapshot.price.toFixed(8),
+              bbUpper: snapshot.bb.upper.toFixed(8),
               poolAddress: pos.poolAddress.toBase58(),
             });
             tracked.state = "EXIT_TRIGGERED";
@@ -205,13 +193,13 @@ export async function startMonitor(): Promise<void> {
             err
           );
         } finally {
-          inFlight.delete(posKey);
+          inFlightSet.delete(posKey);
         }
       }
 
       if (tracked.state === "EXIT_TRIGGERED") {
-        if (inFlight.has(posKey)) continue;
-        inFlight.add(posKey);
+        if (inFlightSet.has(posKey)) continue;
+        inFlightSet.add(posKey);
 
         tracked.state = "EXITING";
         log("EXIT", "Executing exit", { positionAddress: posKey });
@@ -245,28 +233,25 @@ export async function startMonitor(): Promise<void> {
           tracked.state = "MONITORING";
           logError(`Unexpected error during exit of ${posKey}`, err);
         } finally {
-          inFlight.delete(posKey);
+          inFlightSet.delete(posKey);
         }
       }
     }
 
-    // Check if all positions have been exited
+    // Check if all done
     const remaining = trackedPositions.filter(
       (t) => t.state !== "EXITED"
     );
     if (remaining.length === 0 && trackedPositions.length > 0) {
-      log("EXIT", "All positions have been exited. Agent shutting down.");
+      log("EXIT", "All positions exited. Agent shutting down.");
       handleShutdown();
-      return;
+      break;
     }
 
     if (trackedPositions.length === 0) {
-      log("INFO", "No positions to monitor. Retrying in next cycle.");
+      log("INFO", "No positions to monitor");
     }
 
-    setTimeout(loop, CONFIG.pollIntervalMs);
-  };
-
-  // Start first cycle
-  setTimeout(loop, 0);
+    await sleep(CONFIG.pollIntervalMs);
+  }
 }

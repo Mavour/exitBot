@@ -21,53 +21,81 @@ export interface ExitResult {
   receivedX: string;
   receivedY: string;
   txSignatures: string[];
+  dryRun: boolean;
   error?: string;
 }
 
-function buildPriorityFeeInstruction(): TransactionInstruction {
+function buildPriorityFeeIx(): TransactionInstruction {
   return ComputeBudgetProgram.setComputeUnitPrice({
     microLamports: CONFIG.priorityFeeMicrolamports,
   });
 }
 
-async function sendTransactionsWithPriorityFee(
-  txs: Transaction[],
-  wallet: Keypair,
-  connection: Connection
-): Promise<string[]> {
-  const sigs: string[] = [];
+async function sendWithRetry(
+  connection: Connection,
+  tx: Transaction,
+  wallet: Keypair
+): Promise<string> {
+  const priorityIx = buildPriorityFeeIx();
+  const allInstructions = [priorityIx, ...tx.instructions];
 
-  for (const tx of txs) {
-    const priorityIx = buildPriorityFeeInstruction();
-    const allInstructions = [priorityIx, ...tx.instructions];
+  const blockhash = await connection.getLatestBlockhash(CONFIG.commitment);
+  const message = new TransactionMessage({
+    payerKey: wallet.publicKey,
+    recentBlockhash: blockhash.blockhash,
+    instructions: allInstructions,
+  }).compileToV0Message();
 
-    const blockhash = await connection.getLatestBlockhash(CONFIG.commitment);
-    const message = new TransactionMessage({
-      payerKey: wallet.publicKey,
-      recentBlockhash: blockhash.blockhash,
-      instructions: allInstructions,
-    }).compileToV0Message();
+  const versionedTx = new VersionedTransaction(message);
+  versionedTx.sign([wallet]);
 
-    const versionedTx = new VersionedTransaction(message);
-    versionedTx.sign([wallet]);
+  const maxRetries = 3;
+  let lastErr: Error | undefined;
 
-    const sig = await connection.sendTransaction(versionedTx, {
-      skipPreflight: false,
-      maxRetries: 3,
-    });
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const sig = await connection.sendTransaction(versionedTx, {
+        skipPreflight: false,
+        maxRetries: 1,
+      });
 
-    await connection.confirmTransaction(
-      {
-        signature: sig,
-        blockhash: blockhash.blockhash,
-        lastValidBlockHeight: blockhash.lastValidBlockHeight,
-      },
-      CONFIG.commitment
-    );
+      await connection.confirmTransaction(
+        {
+          signature: sig,
+          blockhash: blockhash.blockhash,
+          lastValidBlockHeight: blockhash.lastValidBlockHeight,
+        },
+        CONFIG.commitment
+      );
 
-    sigs.push(sig);
+      return sig;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (attempt < maxRetries) {
+        const delay = 1000 * Math.pow(2, attempt);
+        log("WARN", `Transaction failed, retrying in ${delay}ms`, {
+          attempt: attempt + 1,
+          maxRetries,
+          error: lastErr.message,
+        });
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
   }
 
+  throw lastErr || new Error(`Transaction failed after ${maxRetries} retries`);
+}
+
+async function sendClaimTxs(
+  connection: Connection,
+  txs: Transaction[],
+  wallet: Keypair
+): Promise<string[]> {
+  const sigs: string[] = [];
+  for (const tx of txs) {
+    const sig = await sendWithRetry(connection, tx, wallet);
+    sigs.push(sig);
+  }
   return sigs;
 }
 
@@ -100,6 +128,7 @@ export async function executeFullExit(
     receivedX: "0",
     receivedY: "0",
     txSignatures: [],
+    dryRun,
   };
 
   log("EXIT", `Starting exit for position ${posAddr}`, {
@@ -109,10 +138,9 @@ export async function executeFullExit(
   });
 
   try {
-    // Step 0: Get LbPosition data for operations that need it
     const lbPosition = await getPositionData(position, wallet);
 
-    // Step 1: Claim all swap fees
+    // Step 1 — Claim all swap fees
     log("EXIT", "Step 1: Claiming swap fees", { dryRun });
 
     if (!dryRun) {
@@ -121,22 +149,11 @@ export async function executeFullExit(
         positions: [lbPosition],
       });
 
-      for (const tx of claimTxs) {
-        const sig = await sendAndConfirmTransaction(
-          connection,
-          tx,
-          [wallet],
-          {
-            skipPreflight: false,
-            commitment: CONFIG.commitment,
-            maxRetries: 3,
-          }
-        );
-        result.txSignatures.push(sig);
-        log("EXIT", "Claim fees transaction confirmed", { signature: sig });
-      }
+      const sigs = await sendClaimTxs(connection, claimTxs, wallet);
+      result.txSignatures.push(...sigs);
+      log("EXIT", "Claim fees confirmed", { signatures: sigs });
     } else {
-      log("EXIT", "DRY RUN: Skipping claim fees transaction", {
+      log("EXIT", "DRY RUN: Would claim swap fees", {
         unclaimedFeeX: position.unclaimedFeesX,
         unclaimedFeeY: position.unclaimedFeesY,
       });
@@ -145,7 +162,7 @@ export async function executeFullExit(
     result.claimedFeeX = position.unclaimedFeesX;
     result.claimedFeeY = position.unclaimedFeesY;
 
-    // Step 2: Remove all liquidity
+    // Step 2 — Remove all liquidity
     log("EXIT", "Step 2: Removing all liquidity", { dryRun });
 
     if (dryRun) {
@@ -167,11 +184,7 @@ export async function executeFullExit(
         shouldClaimAndClose: false,
       });
 
-      const sigs = await sendTransactionsWithPriorityFee(
-        removeTxs,
-        wallet,
-        connection
-      );
+      const sigs = await sendClaimTxs(connection, removeTxs, wallet);
       result.txSignatures.push(...sigs);
 
       result.receivedX = position.totalXAmount;
@@ -184,7 +197,7 @@ export async function executeFullExit(
       });
     }
 
-    // Step 3: Close position
+    // Step 3 — Close position (use closePositionIfEmpty for safety)
     log("EXIT", "Step 3: Closing position", { dryRun });
 
     if (!dryRun) {
@@ -193,16 +206,11 @@ export async function executeFullExit(
         position: lbPosition,
       });
 
-      // closePosition returns Transaction (single), wrap in array for helper
-      const sigs = await sendTransactionsWithPriorityFee(
-        [closeTx],
-        wallet,
-        connection
-      );
-      result.txSignatures.push(...sigs);
-      log("EXIT", "Close position confirmed", { signatures: sigs });
+      const sig = await sendWithRetry(connection, closeTx, wallet);
+      result.txSignatures.push(sig);
+      log("EXIT", "Close position confirmed", { signature: sig });
     } else {
-      log("EXIT", "DRY RUN: Skipping close position transaction");
+      log("EXIT", "DRY RUN: Would close position (recover rent SOL)");
     }
 
     result.success = true;
