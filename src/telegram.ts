@@ -17,6 +17,7 @@ import {
 
 const TELEGRAM_API = "https://api.telegram.org";
 const LOCK_FILE = "/tmp/dlmm-exit-agent-menu.lock";
+const OFFSET_FILE = "/tmp/dlmm-exit-agent-offset.txt";
 let enabled = false;
 
 export function initTelegram(): void {
@@ -301,7 +302,7 @@ async function handleUpdate(update: any): Promise<void> {
     await handleStatusCommand(chatId);
   } else if (text === "/positions") {
     await handlePositionsCommand(chatId);
-  } else   if (text === "/start") {
+  } else if (text === "/start") {
     await handleStartCommand(chatId);
   } else if (text === "/cancel") {
     await handleCancelCommand(chatId);
@@ -330,6 +331,10 @@ async function startCommandListener(): Promise<void> {
   process.on("SIGTERM", cleanup);
 
   let offset = 0;
+  try {
+    offset = Number(fs.readFileSync(OFFSET_FILE, "utf-8"));
+  } catch {}
+
   while (true) {
     try {
       const updates = await getUpdates(offset);
@@ -337,6 +342,7 @@ async function startCommandListener(): Promise<void> {
         offset = update.update_id + 1;
         await handleUpdate(update);
       }
+      fs.writeFileSync(OFFSET_FILE, String(offset));
     } catch (err) {
       logError("Telegram update poll failed", err);
     }
