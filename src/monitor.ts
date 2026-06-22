@@ -35,10 +35,22 @@ let isShuttingDown = false;
 const inFlightSet = new Set<string>();
 const oorLeftLastNotified = new Map<string, number>();
 
-function handleShutdown(): void {
+async function handleShutdown(): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
   log("INFO", "Agent stopped by user");
+  await notifyExitSuccess({
+    positionAddress: "N/A",
+    tokenXSymbol: "-",
+    tokenYSymbol: "-",
+    receivedX: "0",
+    receivedY: "0",
+    txSignatures: [],
+    dryRun: false,
+    pnl: null,
+    swapResult: null,
+  });
+  await new Promise(r => setTimeout(r, 2000));
   process.exit(0);
 }
 
