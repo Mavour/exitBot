@@ -3,7 +3,6 @@ import {
   PublicKey,
 } from "@solana/web3.js";
 import DLMM from "@meteora-ag/dlmm";
-import { CONFIG } from "./config";
 import { log, logError } from "./logger";
 
 export interface ActivePosition {
@@ -20,30 +19,16 @@ export interface ActivePosition {
   binRange: { fromBinId: number; toBinId: number };
 }
 
-interface ApiOpenPosition {
-  position_address: string;
-  lower_bin_id: number;
-  upper_bin_id: number;
+interface ApiPoolItem {
+  poolAddress: string;
+  tokenXMint: string;
+  tokenYMint: string;
+  listPositions: string[];
 }
 
-interface ApiTokenInfo {
-  address: string;
-  symbol: string;
-  name: string;
-  decimals: number;
-}
-
-interface ApiPositionsByPool {
-  pool_address: string;
-  token_x: ApiTokenInfo;
-  token_y: ApiTokenInfo;
-  positions: ApiOpenPosition[];
-}
-
-interface ApiOpenPositionsResponse {
-  total_positions: number;
-  total_pools: number;
-  data: ApiPositionsByPool[];
+interface ApiPortfolioResponse {
+  totalPositions: number;
+  pools: ApiPoolItem[];
 }
 
 export async function fetchAllActivePositions(
@@ -70,89 +55,79 @@ export async function fetchAllActivePositions(
     return [];
   }
 
-  let data: ApiOpenPositionsResponse;
+  let data: ApiPortfolioResponse;
   try {
-    data = (await response.json()) as ApiOpenPositionsResponse;
+    data = (await response.json()) as ApiPortfolioResponse;
   } catch (err) {
     logError("Failed to parse Meteora Data API response", err);
     return [];
   }
 
-  if (!data.data || data.data.length === 0) {
+  if (!data.pools || data.pools.length === 0) {
     log("INFO", "No open positions found in wallet");
     return [];
   }
 
-  log("INFO", `Found ${data.total_positions} positions across ${data.total_pools} pools`);
+  log("INFO", `Found ${data.totalPositions} positions across ${data.pools.length} pools`);
 
   const positions: ActivePosition[] = [];
-  const poolCache = new Map<string, DLMM>();
 
-  for (const pool of data.data) {
-    const poolAddrStr = pool.pool_address;
-    const poolPubkey = new PublicKey(poolAddrStr);
+  for (const pool of data.pools) {
+    if (!pool.listPositions || pool.listPositions.length === 0) continue;
+
+    const poolPubkey = new PublicKey(pool.poolAddress);
 
     let dlmmPool: DLMM;
-    if (poolCache.has(poolAddrStr)) {
-      dlmmPool = poolCache.get(poolAddrStr)!;
-    } else {
-      try {
-        dlmmPool = await DLMM.create(connection, poolPubkey, {
-          cluster: "mainnet-beta",
-        });
-        poolCache.set(poolAddrStr, dlmmPool);
-      } catch (err) {
-        logError(`Failed to create DLMM instance for pool ${poolAddrStr}`, err);
-        continue;
-      }
+    try {
+      dlmmPool = await DLMM.create(connection, poolPubkey, {
+        cluster: "mainnet-beta",
+      });
+    } catch (err) {
+      logError(`Failed to create DLMM instance for pool ${pool.poolAddress}`, err);
+      continue;
     }
 
-    // Fetch on-chain positions for this user+pool
     let positionsByUser;
     try {
       positionsByUser = await dlmmPool.getPositionsByUserAndLbPair(wallet);
     } catch (err) {
-      logError(`Failed to fetch positions for pool ${poolAddrStr}`, err);
+      logError(`Failed to fetch positions for pool ${pool.poolAddress}`, err);
       continue;
     }
 
-    for (const apiPos of pool.positions) {
-      const posPubkey = new PublicKey(apiPos.position_address);
-      const posKey = apiPos.position_address;
+    for (const posAddrStr of pool.listPositions) {
+      const posPubkey = new PublicKey(posAddrStr);
 
       const posData = positionsByUser.userPositions.find(
-        (up) => up.publicKey.toBase58() === posKey
+        (up) => up.publicKey.toBase58() === posAddrStr
       );
 
       if (!posData) {
-        log("WARN", `Position ${posKey} not found on-chain, skipping`);
+        log("WARN", `Position ${posAddrStr} not found on-chain, skipping`);
         continue;
       }
 
       const posInfo = posData.positionData;
 
       if (posInfo.totalXAmount === "0" && posInfo.totalYAmount === "0") {
-        log("INFO", `Skipping empty position ${posKey}`);
+        log("INFO", `Skipping empty position ${posAddrStr}`);
         continue;
       }
-
-      const baseTokenMint = pool.token_x.address;
-      const quoteTokenMint = pool.token_y.address;
 
       positions.push({
         poolAddress: poolPubkey,
         positionPubkey: posPubkey,
         dlmmPool,
-        baseTokenMint,
-        quoteTokenMint,
+        baseTokenMint: pool.tokenXMint,
+        quoteTokenMint: pool.tokenYMint,
         dexScreenerPairAddress: "",
         totalXAmount: posInfo.totalXAmount,
         totalYAmount: posInfo.totalYAmount,
         unclaimedFeesX: posInfo.feeX.toString(),
         unclaimedFeesY: posInfo.feeY.toString(),
         binRange: {
-          fromBinId: apiPos.lower_bin_id,
-          toBinId: apiPos.upper_bin_id,
+          fromBinId: posInfo.lowerBinId,
+          toBinId: posInfo.upperBinId,
         },
       });
     }
