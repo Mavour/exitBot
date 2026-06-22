@@ -13,7 +13,6 @@ import { executeFullExit, ExitResult } from "./exit-executor";
 import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
 import {
-  initTelegram,
   notifyAgentStart,
   notifyExitTriggered,
   notifyExitSuccess,
@@ -97,7 +96,6 @@ export async function startMonitor(): Promise<void> {
     return { position: p, state: "MONITORING" as PositionState };
   });
 
-  initTelegram();
   notifyAgentStart({
     positionsCount: trackedPositions.length,
     dryRun: CONFIG.dryRun,

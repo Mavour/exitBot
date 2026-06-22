@@ -4,6 +4,7 @@ dotenv.config();
 import { CONFIG } from "./config";
 import { wallet } from "./wallet";
 import { startMonitor } from "./monitor";
+import { initTelegram, setupBotCommands } from "./telegram";
 import { log, logError } from "./logger";
 
 function printBanner(): void {
@@ -30,6 +31,8 @@ async function main(): Promise<void> {
     bbStdDev: CONFIG.bbStdDev,
   });
 
+  initTelegram();
+  await setupBotCommands();
   await startMonitor();
 }
 
