@@ -39,17 +39,6 @@ async function handleShutdown(): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
   log("INFO", "Agent stopped by user");
-  await notifyExitSuccess({
-    positionAddress: "N/A",
-    tokenXSymbol: "-",
-    tokenYSymbol: "-",
-    receivedX: "0",
-    receivedY: "0",
-    txSignatures: [],
-    dryRun: false,
-    pnl: null,
-    swapResult: null,
-  });
   await new Promise(r => setTimeout(r, 2000));
   process.exit(0);
 }
@@ -339,7 +328,7 @@ export async function startMonitor(): Promise<void> {
     );
     if (remaining.length === 0 && trackedPositions.length > 0) {
       log("EXIT", "All positions exited. Agent shutting down.");
-      handleShutdown();
+      await handleShutdown();
       break;
     }
 

@@ -22,15 +22,50 @@ export interface SwapResult {
   reason?: string;
 }
 
+let tokenDecimalsCache: Record<string, number> | null = null;
+
 async function getTokenDecimals(
   mint: string,
-  _connection: Connection
+  connection: Connection
 ): Promise<number> {
   if (mint === SOL_MINT) return 9;
   if (mint === USDC_MINT) return 6;
-  const mintPubkey = new PublicKey(mint);
-  const info = await withRpcFallback(conn => getMint(conn, mintPubkey));
-  return info.decimals;
+
+  // Try Jupiter token list first (avoids RPC 429)
+  if (!tokenDecimalsCache) {
+    try {
+      const res = await fetch("https://token.jup.ag/all", {
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = (await res.json()) as Array<{ address: string; symbol: string; decimals: number }>;
+      tokenDecimalsCache = {};
+      for (const t of data) {
+        tokenDecimalsCache[t.address] = t.decimals;
+      }
+    } catch {
+      tokenDecimalsCache = {};
+    }
+  }
+  if (tokenDecimalsCache[mint] !== undefined) {
+    return tokenDecimalsCache[mint];
+  }
+
+  // Fallback: try RPC with retry on 429
+  let lastErr: Error | undefined;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const mintPubkey = new PublicKey(mint);
+      const info = await withRpcFallback(conn => getMint(conn, mintPubkey));
+      return info.decimals;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
+      if (attempt === 0) {
+        log("WARN", "RPC getMint failed, retrying after 2s", { mint });
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  }
+  throw lastErr || new Error(`Failed to fetch decimals for ${mint}`);
 }
 
 async function getTokenValueUsd(

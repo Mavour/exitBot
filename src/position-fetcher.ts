@@ -75,7 +75,7 @@ async function fetchPositionPriceRanges(
     const positions = data?.positions;
     if (!Array.isArray(positions)) return map;
     for (const p of positions) {
-      console.log('RAW:', JSON.stringify(p, null, 2));
+      console.log('RAW POSITION:', JSON.stringify(p, null, 2));
       const addr = p.positionAddress as string;
       const min = Number(p.minPrice);
       const max = Number(p.maxPrice);
