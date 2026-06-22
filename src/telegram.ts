@@ -34,48 +34,46 @@ export function initTelegram(): void {
 
 export async function setupBotCommands(): Promise<void> {
   if (!enabled) return;
-  try {
-    const commandsUrl = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/setMyCommands`;
-    const commandsRes = await fetch(commandsUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        commands: [
-          { command: "menu", description: "⚙️ Bot Configuration" },
-          { command: "positions", description: "📍 Active Positions" },
-          { command: "status", description: "📊 Bot Status" },
-          { command: "start", description: "🔄 Restart Bot" },
-        ],
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!commandsRes.ok) {
-      logError(
-        "setMyCommands failed",
-        new Error(`HTTP ${commandsRes.status}`)
-      );
-    }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const commandsUrl = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/setMyCommands`;
+      const commandsRes = await fetch(commandsUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          commands: [
+            { command: "menu", description: "⚙️ Bot Configuration" },
+            { command: "positions", description: "📍 Active Positions" },
+            { command: "status", description: "📊 Bot Status" },
+            { command: "start", description: "🔄 Restart Bot" },
+          ],
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!commandsRes.ok) {
+        throw new Error(`setMyCommands HTTP ${commandsRes.status}`);
+      }
 
-    const menuUrl = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/setChatMenuButton`;
-    const menuRes = await fetch(menuUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: CONFIG.telegramChatId,
-        menu_button: { type: "commands" },
-      }),
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!menuRes.ok) {
-      logError(
-        "setChatMenuButton failed",
-        new Error(`HTTP ${menuRes.status}`)
-      );
-    }
+      const menuUrl = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/setChatMenuButton`;
+      const menuRes = await fetch(menuUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chat_id: CONFIG.telegramChatId,
+          menu_button: { type: "commands" },
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!menuRes.ok) {
+        throw new Error(`setChatMenuButton HTTP ${menuRes.status}`);
+      }
 
-    log("INFO", "Telegram bot commands registered");
-  } catch (err) {
-    logError("Failed to register bot commands", err);
+      log("INFO", "Telegram bot commands registered");
+      return;
+    } catch (err) {
+      logError(`Failed to register bot commands (attempt ${attempt}/3)`, err);
+      if (attempt < 3) await new Promise((r) => setTimeout(r, 2000));
+    }
   }
 }
 
