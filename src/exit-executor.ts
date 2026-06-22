@@ -12,6 +12,7 @@ import { CONFIG } from "./config";
 import { ActivePosition } from "./position-fetcher";
 import { autoSwapAfterExit, SwapResult } from "./jupiter-swap";
 import { log, logError } from "./logger";
+import { withRpcFallback } from "./rpc-manager";
 
 export interface ExitResult {
   success: boolean;
@@ -40,7 +41,7 @@ async function sendWithRetry(
   const priorityIx = buildPriorityFeeIx();
   const allInstructions = [priorityIx, ...tx.instructions];
 
-  const blockhash = await connection.getLatestBlockhash(CONFIG.commitment);
+  const blockhash = await withRpcFallback(conn => conn.getLatestBlockhash(CONFIG.commitment));
   const message = new TransactionMessage({
     payerKey: wallet.publicKey,
     recentBlockhash: blockhash.blockhash,
@@ -55,19 +56,19 @@ async function sendWithRetry(
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const sig = await connection.sendTransaction(versionedTx, {
+      const sig = await withRpcFallback(conn => conn.sendTransaction(versionedTx, {
         skipPreflight: false,
         maxRetries: 1,
-      });
+      }));
 
-      await connection.confirmTransaction(
+      await withRpcFallback(conn => conn.confirmTransaction(
         {
           signature: sig,
           blockhash: blockhash.blockhash,
           lastValidBlockHeight: blockhash.lastValidBlockHeight,
         },
         CONFIG.commitment
-      );
+      ));
 
       return sig;
     } catch (err) {
@@ -101,8 +102,8 @@ async function sendClaimTxs(
 }
 
 async function getPositionData(position: ActivePosition, wallet: Keypair) {
-  const positionsByUser = await position.dlmmPool.getPositionsByUserAndLbPair(
-    wallet.publicKey
+  const positionsByUser = await withRpcFallback(conn =>
+    position.dlmmPool.getPositionsByUserAndLbPair(wallet.publicKey)
   );
   const posKey = position.positionPubkey.toBase58();
   const found = positionsByUser.userPositions.find(

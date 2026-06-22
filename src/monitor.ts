@@ -10,6 +10,7 @@ import {
 import { checkExitConditions } from "./indicators";
 import { executeFullExit, ExitResult } from "./exit-executor";
 import { log, logError } from "./logger";
+import { withRpcFallback } from "./rpc-manager";
 import {
   initTelegram,
   notifyAgentStart,
@@ -21,6 +22,7 @@ import {
 } from "./telegram";
 
 const REQUIRED_CANDLES = 60;
+const POSITION_REFETCH_INTERVAL = 10;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
 
@@ -54,10 +56,14 @@ export async function startMonitor(): Promise<void> {
   let pollCycle = 0;
 
   // Fetch & resolve on startup
-    const initialPositions = await fetchAllActivePositions(
-    wallet.publicKey,
-    connection
-  );
+  let initialPositions: ActivePosition[] = [];
+  try {
+    initialPositions = await withRpcFallback(conn =>
+      fetchAllActivePositions(wallet.publicKey, conn)
+    );
+  } catch (err) {
+    logError("Failed to fetch positions on startup", err);
+  }
 
   trackedPositions = initialPositions.map((p) => ({
     position: p,
@@ -88,44 +94,51 @@ export async function startMonitor(): Promise<void> {
       inFlight: inFlightSet.size,
     });
 
-    log("INFO", "Re-fetching position list");
-    const freshPositions = await fetchAllActivePositions(
-      wallet.publicKey,
-      connection
-    );
+    // Only re-fetch positions every POSITION_REFETCH_INTERVAL cycles
+    const shouldRefetch = pollCycle % POSITION_REFETCH_INTERVAL === 1;
+    if (shouldRefetch) {
+      log("INFO", "Re-fetching position list");
+      try {
+        const freshPositions = await withRpcFallback(conn =>
+          fetchAllActivePositions(wallet.publicKey, conn)
+        );
 
-    for (const pos of freshPositions) {
-      if (
-        !trackedPositions.some(
-          (t) =>
-            t.position.positionPubkey.toBase58() ===
-            pos.positionPubkey.toBase58()
-        )
-      ) {
-        trackedPositions.push({
-          position: pos,
-          state: "MONITORING",
+        for (const pos of freshPositions) {
+          if (
+            !trackedPositions.some(
+              (t) =>
+                t.position.positionPubkey.toBase58() ===
+                pos.positionPubkey.toBase58()
+            )
+          ) {
+            trackedPositions.push({
+              position: pos,
+              state: "MONITORING",
+            });
+            log("INFO", "New position detected", {
+              positionAddress: pos.positionPubkey.toBase58(),
+            });
+          }
+        }
+
+        const freshKeys = new Set(
+          freshPositions.map((p) => p.positionPubkey.toBase58())
+        );
+        trackedPositions = trackedPositions.filter((t) => {
+          if (t.state === "EXITED") return false;
+          const key = t.position.positionPubkey.toBase58();
+          if (!freshKeys.has(key) && t.state === "MONITORING") {
+            log("INFO", "Position no longer active, removing", {
+              positionAddress: key,
+            });
+            return false;
+          }
+          return true;
         });
-        log("INFO", "New position detected", {
-          positionAddress: pos.positionPubkey.toBase58(),
-        });
+      } catch (err) {
+        logError("Failed to re-fetch positions, using cached data", err);
       }
     }
-
-    const freshKeys = new Set(
-      freshPositions.map((p) => p.positionPubkey.toBase58())
-    );
-    trackedPositions = trackedPositions.filter((t) => {
-      if (t.state === "EXITED") return false;
-      const key = t.position.positionPubkey.toBase58();
-      if (!freshKeys.has(key) && t.state === "MONITORING") {
-        log("INFO", "Position no longer active, removing", {
-          positionAddress: key,
-        });
-        return false;
-      }
-      return true;
-    });
 
     // Process each position
     for (const tracked of trackedPositions) {
@@ -139,78 +152,68 @@ export async function startMonitor(): Promise<void> {
       if (tracked.state === "MONITORING") {
         if (inFlightSet.has(posKey)) continue;
 
-        // Re-fetch active bin — price moves every cycle
-        try {
-          const freshBin = await pos.dlmmPool.getActiveBin();
-          const abId = freshBin.binId;
-          pos.activeBinId = abId;
-          pos.isOORRight = abId > pos.binRange.toBinId;
-          pos.isOORLeft = abId < pos.binRange.fromBinId;
-          pos.isInRange = abId >= pos.binRange.fromBinId && abId <= pos.binRange.toBinId;
-        } catch (err) {
-          logError(
-            `Failed to refresh active bin for ${posKey}`,
-            err
-          );
-          continue;
-        }
-
-        // Out-of-range right → exit immediately, skip indicator check
-        if (pos.isOORRight) {
-          log("WARN", "Position is OUT-OF-RANGE RIGHT", {
-            positionAddress: posKey,
-            activeBinId: pos.activeBinId,
-            toBinId: pos.binRange.toBinId,
-          });
-          notifyOORRight({
-            positionAddress: posKey,
-            poolAddress: pos.poolAddress.toBase58(),
-            activeBinId: pos.activeBinId,
-            toBinId: pos.binRange.toBinId,
-          });
-          notifyExitTriggered({
-            positionAddress: posKey,
-            poolAddress: pos.poolAddress.toBase58(),
-            rsi: 0,
-            price: 0,
-            bbUpper: 0,
-            trigger: "OOR_RIGHT",
-            pnl: pos.pnl,
-          });
-          tracked.state = "EXIT_TRIGGERED";
-          continue;
-        }
-
-        // Out-of-range left → notify (throttled), skip RSI/BB, do NOT exit
-        if (pos.isOORLeft) {
-          log("WARN", "Position is OUT-OF-RANGE LEFT", {
-            positionAddress: posKey,
-            activeBinId: pos.activeBinId,
-            fromBinId: pos.binRange.fromBinId,
-          });
-          const hourMs = 60 * 60 * 1000;
-          const lastNotified = oorLeftLastNotified.get(posKey) ?? 0;
-          if (Date.now() - lastNotified > hourMs) {
-            notifyOORLeft({
-              positionAddress: posKey,
-              poolAddress: pos.poolAddress.toBase58(),
-              activeBinId: pos.activeBinId,
-              fromBinId: pos.binRange.fromBinId,
-            });
-            oorLeftLastNotified.set(posKey, Date.now());
-          }
-          continue;
-        }
-
         inFlightSet.add(posKey);
-
-        // Only check RSI/BB when position is in range
         try {
           const candles = await getCandles15m(
             pos.tokenMint,
             REQUIRED_CANDLES
           );
 
+          const currentPrice = candles[candles.length - 1].close;
+
+          // Price-based OOR detection — zero RPC calls
+          pos.isOORRight = currentPrice > pos.binPriceRange.maxPrice;
+          pos.isOORLeft  = currentPrice < pos.binPriceRange.minPrice;
+          pos.isInRange  = !pos.isOORRight && !pos.isOORLeft;
+
+          // Out-of-range right → exit immediately, skip indicator check
+          if (pos.isOORRight) {
+            log("WARN", "Position is OUT-OF-RANGE RIGHT", {
+              positionAddress: posKey,
+              price: currentPrice,
+              maxBinPrice: pos.binPriceRange.maxPrice,
+            });
+            notifyOORRight({
+              positionAddress: posKey,
+              poolAddress: pos.poolAddress.toBase58(),
+              activeBinId: 0,
+              toBinId: 0,
+            });
+            notifyExitTriggered({
+              positionAddress: posKey,
+              poolAddress: pos.poolAddress.toBase58(),
+              rsi: 0,
+              price: currentPrice,
+              bbUpper: 0,
+              trigger: "OOR_RIGHT",
+              pnl: pos.pnl,
+            });
+            tracked.state = "EXIT_TRIGGERED";
+            continue;
+          }
+
+          // Out-of-range left → notify (throttled), skip RSI/BB, do NOT exit
+          if (pos.isOORLeft) {
+            log("WARN", "Position is OUT-OF-RANGE LEFT", {
+              positionAddress: posKey,
+              price: currentPrice,
+              minBinPrice: pos.binPriceRange.minPrice,
+            });
+            const hourMs = 60 * 60 * 1000;
+            const lastNotified = oorLeftLastNotified.get(posKey) ?? 0;
+            if (Date.now() - lastNotified > hourMs) {
+              notifyOORLeft({
+                positionAddress: posKey,
+                poolAddress: pos.poolAddress.toBase58(),
+                activeBinId: 0,
+                fromBinId: 0,
+              });
+              oorLeftLastNotified.set(posKey, Date.now());
+            }
+            continue;
+          }
+
+          // Only check RSI/BB when position is in range
           const snapshot = checkExitConditions(candles);
 
           // If RSI is 0, indicators couldn't be computed (not enough data)

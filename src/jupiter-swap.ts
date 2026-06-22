@@ -7,6 +7,7 @@ import {
 import { getMint } from "@solana/spl-token";
 import { CONFIG } from "./config";
 import { log, logError } from "./logger";
+import { withRpcFallback } from "./rpc-manager";
 
 const JUPITER_API = "https://quote-api.jup.ag/v6";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -23,12 +24,12 @@ export interface SwapResult {
 
 async function getTokenDecimals(
   mint: string,
-  connection: Connection
+  _connection: Connection
 ): Promise<number> {
   if (mint === SOL_MINT) return 9;
   if (mint === USDC_MINT) return 6;
   const mintPubkey = new PublicKey(mint);
-  const info = await getMint(connection, mintPubkey);
+  const info = await withRpcFallback(conn => getMint(conn, mintPubkey));
   return info.decimals;
 }
 
@@ -163,12 +164,12 @@ export async function autoSwapAfterExit(params: {
     );
     tx.sign([params.wallet]);
 
-    const sig = await params.connection.sendTransaction(tx, {
+    const sig = await withRpcFallback(conn => conn.sendTransaction(tx, {
       skipPreflight: false,
       maxRetries: 2,
-    });
+    }));
 
-    await params.connection.confirmTransaction(sig, CONFIG.commitment);
+    await withRpcFallback(conn => conn.confirmTransaction(sig, CONFIG.commitment));
 
     result.success = true;
     result.txSignature = sig;

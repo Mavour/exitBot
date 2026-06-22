@@ -5,6 +5,7 @@ import {
 } from "@solana/web3.js";
 import { CONFIG } from "./config";
 import { log } from "./logger";
+import { getConnection, withRpcFallback } from "./rpc-manager";
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
@@ -68,14 +69,12 @@ function loadKeypair(privateKeyStr: string): Keypair {
   );
 }
 
-export const connection = new Connection(CONFIG.rpcUrl, {
-  commitment: CONFIG.commitment,
-});
+export const connection = getConnection();
 
 export const wallet = loadKeypair(CONFIG.walletPrivateKey);
 
 export async function logWalletInfo(): Promise<void> {
-  const balance = await connection.getBalance(wallet.publicKey);
+  const balance = await withRpcFallback(conn => conn.getBalance(wallet.publicKey));
   log("INFO", "Wallet loaded", {
     publicKey: wallet.publicKey.toBase58(),
     balanceSol: (balance / LAMPORTS_PER_SOL).toFixed(4),

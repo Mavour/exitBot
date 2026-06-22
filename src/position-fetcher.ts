@@ -2,8 +2,9 @@ import {
   Connection,
   PublicKey,
 } from "@solana/web3.js";
-import DLMM from "@meteora-ag/dlmm";
+import DLMM, { getPriceOfBinByBinId } from "@meteora-ag/dlmm";
 import { log, logError } from "./logger";
+import { withRpcFallback } from "./rpc-manager";
 
 export interface PNLData {
   depositValueSol: number;
@@ -22,7 +23,6 @@ export interface ActivePosition {
   tokenMint: string;
   tokenXSymbol: string;
   tokenYSymbol: string;
-  activeBinId: number;
   isOORRight: boolean;
   isOORLeft: boolean;
   isInRange: boolean;
@@ -31,6 +31,7 @@ export interface ActivePosition {
   unclaimedFeesX: string;
   unclaimedFeesY: string;
   binRange: { fromBinId: number; toBinId: number };
+  binPriceRange: { minPrice: number; maxPrice: number };
   pnl: PNLData | null;
 }
 
@@ -138,9 +139,9 @@ export async function fetchAllActivePositions(
 
     let dlmmPool: DLMM;
     try {
-      dlmmPool = await DLMM.create(connection, poolPubkey, {
-        cluster: "mainnet-beta",
-      });
+      dlmmPool = await withRpcFallback(conn =>
+        DLMM.create(conn, poolPubkey, { cluster: "mainnet-beta" })
+      );
     } catch (err) {
       logError(`Failed to create DLMM instance for pool ${pool.poolAddress}`, err);
       continue;
@@ -148,17 +149,11 @@ export async function fetchAllActivePositions(
 
     let positionsByUser;
     try {
-      positionsByUser = await dlmmPool.getPositionsByUserAndLbPair(wallet);
+      positionsByUser = await withRpcFallback(conn =>
+        dlmmPool.getPositionsByUserAndLbPair(wallet)
+      );
     } catch (err) {
       logError(`Failed to fetch positions for pool ${pool.poolAddress}`, err);
-      continue;
-    }
-
-    let activeBin: { binId: number } | undefined;
-    try {
-      activeBin = await dlmmPool.getActiveBin();
-    } catch (err) {
-      logError(`Failed to get active bin for pool ${pool.poolAddress}`, err);
       continue;
     }
 
@@ -186,7 +181,11 @@ export async function fetchAllActivePositions(
 
       const fromBinId = posInfo.lowerBinId;
       const toBinId = posInfo.upperBinId;
-      const activeB = activeBin.binId;
+
+      // Compute bin price range once at startup (no recurring RPC calls for OOR)
+      const binStep = dlmmPool.lbPair.binStep;
+      const minPrice = Number(getPriceOfBinByBinId(fromBinId, binStep));
+      const maxPrice = Number(getPriceOfBinByBinId(toBinId, binStep));
 
       positions.push({
         poolAddress: poolPubkey,
@@ -197,10 +196,9 @@ export async function fetchAllActivePositions(
         tokenMint: pool.tokenXMint,
         tokenXSymbol: baseSymbol,
         tokenYSymbol: quoteSymbol,
-        activeBinId: activeB,
-        isOORRight: activeB > toBinId,
-        isOORLeft: activeB < fromBinId,
-        isInRange: activeB >= fromBinId && activeB <= toBinId,
+        isOORRight: false,
+        isOORLeft: false,
+        isInRange: true,
         totalXAmount: posInfo.totalXAmount,
         totalYAmount: posInfo.totalYAmount,
         unclaimedFeesX: posInfo.feeX.toString(),
@@ -209,6 +207,7 @@ export async function fetchAllActivePositions(
           fromBinId: posInfo.lowerBinId,
           toBinId: posInfo.upperBinId,
         },
+        binPriceRange: { minPrice, maxPrice },
         pnl: parsePNL(pool),
       });
     }
