@@ -99,6 +99,15 @@ async function sendClaimTxs(
   return sigs;
 }
 
+function divDecimals(raw: string, decimals: number): string {
+  const n = BigInt(raw);
+  const d = 10n ** BigInt(decimals);
+  const whole = n / d;
+  const frac = n % d;
+  const f = frac.toString().padStart(decimals, "0").replace(/0+$/, "");
+  return f ? `${whole}.${f}` : whole.toString();
+}
+
 export async function executeFullExit(
   position: ActivePosition,
   wallet: Keypair,
@@ -133,8 +142,10 @@ export async function executeFullExit(
         fromBinId: position.binRange.fromBinId,
         toBinId: position.binRange.toBinId,
       });
-      result.receivedX = position.totalXAmount;
-      result.receivedY = position.totalYAmount;
+      const xDec = position.dlmmPool.tokenX.mint.decimals;
+      const yDec = position.dlmmPool.tokenY.mint.decimals;
+      result.receivedX = divDecimals(position.totalXAmount, xDec);
+      result.receivedY = divDecimals(position.totalYAmount, yDec);
     } else {
       const removeTxs = await position.dlmmPool.removeLiquidity({
         user: wallet.publicKey,
@@ -148,8 +159,10 @@ export async function executeFullExit(
       const sigs = await sendClaimTxs(connection, removeTxs, wallet);
       result.txSignatures.push(...sigs);
 
-      result.receivedX = position.totalXAmount;
-      result.receivedY = position.totalYAmount;
+      const xDec = position.dlmmPool.tokenX.mint.decimals;
+      const yDec = position.dlmmPool.tokenY.mint.decimals;
+      result.receivedX = divDecimals(position.totalXAmount, xDec);
+      result.receivedY = divDecimals(position.totalYAmount, yDec);
 
       log("EXIT", "Remove liquidity confirmed", {
         signatures: sigs,

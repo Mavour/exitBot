@@ -123,7 +123,7 @@ export async function notifyExitTriggered(params: {
     const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
     const prefix = params.pnl.pnlSol >= 0 ? "+" : "";
     lines.push(
-      `<b>PNL:</b> ${sign} ${params.pnl.pnlPercent.toFixed(2)}% (${prefix}${params.pnl.pnlSol.toFixed(4)} SOL)`,
+      `<b>PNL:</b> ${sign} ${params.pnl.pnlPercent.toFixed(4)}% (${prefix}${params.pnl.pnlSol.toFixed(7)} SOL)`,
     );
   }
   await sendMessage(lines.join("\n"));
@@ -157,8 +157,9 @@ export async function notifyExitSuccess(params: {
     lines.push(
       "",
       "<b>📊 PNL</b>",
-      `${sign} ${params.pnl.pnlPercent.toFixed(2)}% (${prefix}${params.pnl.pnlSol.toFixed(4)} SOL)`,
+      `${sign} ${params.pnl.pnlPercent.toFixed(4)}% (${prefix}${params.pnl.pnlSol.toFixed(7)} SOL)`,
       `Fees earned: ${params.pnl.totalFeeEarnedSol.toFixed(4)} SOL`,
+      `Deposit: ${params.pnl.depositValueSol.toFixed(4)} SOL`,
     );
   }
   if (params.swapResult && !params.dryRun) {

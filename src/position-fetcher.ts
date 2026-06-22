@@ -66,7 +66,7 @@ function parsePNL(
 ): PNLData | null {
   try {
     const pnlSolStr = (poolData as any).pnlSol;
-    const pnlPctStr = (poolData as any).pnlPctChange;
+    const pnlPctStr = (poolData as any).pnlSolPctChange;
     const feeStr = (poolData as any).unclaimedFeesSol;
     const depositStr = (poolData as any).totalDepositSol;
     const balanceStr = (poolData as any).balancesSol;
