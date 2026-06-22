@@ -73,7 +73,7 @@ export async function getCandles15m(
   limit: number = 60
 ): Promise<Candle[]> {
   const fetchLimit = Math.max(limit + 10, MIN_CANDLES_REQUIRED + 10);
-  const raw = await fetchGMGNKline(tokenMint, "15m", fetchLimit);
+  const raw = await fetchGMGNKline(tokenMint, CONFIG.candleTimeframe, fetchLimit);
 
   raw.sort((a, b) => a.t - b.t);
 
