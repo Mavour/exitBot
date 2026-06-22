@@ -1,5 +1,6 @@
 import { log, logError } from "./logger";
 import { CONFIG } from "./config";
+import { wallet } from "./wallet";
 import { lastPositionSnapshots } from "./monitor";
 import path from "path";
 import fs from "fs";
@@ -351,22 +352,42 @@ export async function handleTextInput(
 
 export async function handleStopCommand(chatId: number): Promise<void> {
   if (!isAuthorized(chatId)) return;
-  await sendTelegramMessage("🛑 Stopping bot...", String(chatId));
-  await new Promise((r) => setTimeout(r, 1000));
+  await sendTelegramMessage(
+    "🛑 <b>Bot stopped.</b>\nSend /start to resume monitoring.",
+    String(chatId)
+  );
+  await new Promise((r) => setTimeout(r, 1500));
   try {
-    execSync("pm2 stop dlmm-exit-agent", { stdio: "ignore" });
+    execSync("pm2 stop dlmm-exit-agent --no-autorestart", { stdio: "ignore" });
   } catch {
-    // Expected - process killed by PM2
+    // process already stopped — ignore
   }
 }
 
 export async function handleStartCommand(chatId: number): Promise<void> {
   if (!isAuthorized(chatId)) return;
-  await sendTelegramMessage("▶️ Starting bot...", String(chatId));
   try {
-    execSync("pm2 start dlmm-exit-agent", { stdio: "ignore" });
-  } catch (err) {
-    logError("Failed to start bot via PM2", err);
+    const raw = execSync("pm2 jlist", {
+      stdio: ["pipe", "pipe", "ignore"],
+    }).toString();
+    const procs = JSON.parse(raw) as any[];
+    const proc = procs.find((p: any) => p.name === "dlmm-exit-agent");
+    if (proc?.pm2_env?.status === "online") {
+      await sendTelegramMessage(
+        "⚠️ Bot is already running.\nUse /positions to check active positions.",
+        String(chatId)
+      );
+      return;
+    }
+  } catch {
+    // pm2 jlist failed — proceed to start
+  }
+  await sendTelegramMessage("▶️ Starting bot...", String(chatId));
+  await new Promise((r) => setTimeout(r, 1500));
+  try {
+    execSync("pm2 start ecosystem.config.js", { stdio: "ignore" });
+  } catch {
+    execSync("pm2 restart dlmm-exit-agent", { stdio: "ignore" });
   }
 }
 
@@ -381,65 +402,80 @@ export async function handleCancelCommand(chatId: number): Promise<void> {
 export async function handlePositionsCommand(chatId: number): Promise<void> {
   if (!isAuthorized(chatId)) return;
 
-  const snapshots = lastPositionSnapshots;
-  if (snapshots.length === 0) {
-    await sendTelegramMessage(
-      "📍 No active positions being monitored.",
-      String(chatId)
-    );
-    return;
-  }
+  await sendTelegramMessage("🔄 Fetching positions...", String(chatId));
 
-  const lines: string[] = [
-    `<b>📍 Active Positions (${snapshots.length})</b>`,
-    "",
-  ];
+  try {
+    const url = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${wallet.publicKey.toBase58()}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    const data = (await res.json()) as any;
 
-  let totalValue = 0;
+    const pools = data?.pools ?? [];
+    const totalPositions = data?.total?.totalPositions ?? 0;
 
-  for (let i = 0; i < snapshots.length; i++) {
-    const pos = snapshots[i];
-    const pnl = pos.pnl;
-    const pnlEmoji = pnl ? (pnl.pnlPercent >= 0 ? "🟢" : "🔴") : "";
-    const pnlSign = pnl && pnl.pnlPercent >= 0 ? "+" : "";
-    const pnlPct = pnl ? `${pnlSign}${pnl.pnlPercent.toFixed(4)}%` : "N/A";
-    const pnlSol =
-      pnl && pnl.pnlSol !== undefined
-        ? `${pnl.pnlSol >= 0 ? "+" : ""}${pnl.pnlSol.toFixed(7)} SOL`
-        : "";
-
-    const inRangeStr = pos.isInRange
-      ? "✅"
-      : pos.isOORRight
-        ? "🔴 OOR Right"
-        : "🟡 OOR Left";
-
-    const ageMs = Date.now() - pos.createdAt;
-    const ageHours = Math.floor(ageMs / 3600000);
-    const ageMins = Math.floor((ageMs % 3600000) / 60000);
-    const ageStr =
-      ageHours > 0 ? `${ageHours}h ${ageMins}m` : `${ageMins}m`;
-
-    if (pnl) {
-      totalValue += pnl.currentValueSol;
+    if (totalPositions === 0 || pools.length === 0) {
+      await sendTelegramMessage(
+        "📍 No active positions being monitored.",
+        String(chatId)
+      );
+      return;
     }
 
-    lines.push(
-      `${i + 1}. <b>${pos.tokenXSymbol}/${pos.tokenYSymbol}</b>`,
-      `   Position: <code>${pos.positionAddress.slice(0, 8)}...</code>`,
-      `   Price: ${pos.price}`,
-      `   RSI(${CONFIG.rsiPeriod}): ${pos.rsi.toFixed(2)}`,
-      `   BB Upper: ${pos.bbUpper}`,
-      `   In Range: ${inRangeStr}`,
-      `   PNL: ${pnlEmoji} ${pnlPct} ${pnlSol}`.trim(),
-      `   Age: ${ageStr}`,
-      `   ${"─".repeat(16)}`,
+    let msg = `<b>📍 Active Positions (${totalPositions})</b>\n\n`;
+
+    for (const pool of pools) {
+      const positionAddress = pool.listPositions?.[0] ?? "N/A";
+      const shortPos =
+        positionAddress.slice(0, 8) + "..." + positionAddress.slice(-4);
+      const shortPool =
+        pool.poolAddress.slice(0, 8) + "..." + pool.poolAddress.slice(-4);
+
+      const pnlSol = parseFloat(pool.pnlSol ?? "0");
+      const pnlPct = parseFloat(pool.pnlSolPctChange ?? "0") * 100;
+      const pnlEmoji = pnlSol >= 0 ? "🟢" : "🔴";
+      const pnlSign = pnlSol >= 0 ? "+" : "";
+
+      const balanceSol = parseFloat(pool.balancesSol ?? "0").toFixed(4);
+      const depositSol = parseFloat(pool.totalDepositSol ?? "0").toFixed(4);
+      const unclaimedFees = parseFloat(pool.unclaimedFeesSol ?? "0").toFixed(6);
+      const isOOR = pool.outOfRange === true;
+      const rangeStatus = isOOR ? "⚠️ Out of Range" : "✅ In Range";
+
+      const snapshot = lastPositionSnapshots.find(
+        (s) => s.poolAddress === pool.poolAddress
+      );
+      const rsiStr = snapshot
+        ? snapshot.rsi.toFixed(2)
+        : "N/A (next poll)";
+      const bbUpperStr = snapshot
+        ? snapshot.bb.upper.toFixed(8)
+        : "N/A (next poll)";
+      const priceStr = snapshot
+        ? snapshot.price.toFixed(8)
+        : pool.poolPrice?.toFixed(8) ?? "N/A";
+
+      msg += `<b>${pool.tokenX ?? "?"}/${pool.tokenY ?? "?"}</b>\n`;
+      msg += `Position: <code>${shortPos}</code>\n`;
+      msg += `Pool: <code>${shortPool}</code>\n`;
+      msg += `Price: ${priceStr}\n`;
+      msg += `RSI(${CONFIG.rsiPeriod}): ${rsiStr}\n`;
+      msg += `BB Upper: ${bbUpperStr}\n`;
+      msg += `Range: ${rangeStatus}\n`;
+      msg += `PNL: ${pnlEmoji} ${pnlSign}${pnlPct.toFixed(4)}% (${pnlSign}${pnlSol.toFixed(7)} SOL)\n`;
+      msg += `Fees: ${unclaimedFees} SOL\n`;
+      msg += `Balance: ${balanceSol} SOL\n`;
+      msg += `${"─".repeat(16)}\n`;
+    }
+
+    const totalSol = parseFloat(data?.total?.balancesSol ?? "0").toFixed(4);
+    msg += `\n💼 <b>Total Value: ${totalSol} SOL</b>`;
+
+    await sendTelegramMessage(msg, String(chatId));
+  } catch (err) {
+    await sendTelegramMessage(
+      `❌ Failed to fetch positions\nError: ${String(err).slice(0, 100)}`,
+      String(chatId)
     );
   }
-
-  lines.push(`Total Value: ${totalValue.toFixed(4)} SOL`);
-
-  await sendTelegramMessage(lines.join("\n"), String(chatId));
 }
 
 export { pendingInput, isAuthorized };

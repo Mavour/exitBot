@@ -1,3 +1,4 @@
+import fs from "fs";
 import { log, logError } from "./logger";
 import { CONFIG } from "./config";
 import { PNLData } from "./position-fetcher";
@@ -16,6 +17,7 @@ import {
 } from "./telegram-menu";
 
 const TELEGRAM_API = "https://api.telegram.org";
+const LOCK_FILE = "/tmp/dlmm-exit-agent-menu.lock";
 let enabled = false;
 
 export function initTelegram(): void {
@@ -311,6 +313,28 @@ async function handleUpdate(update: any): Promise<void> {
 }
 
 async function startCommandListener(): Promise<void> {
+  if (fs.existsSync(LOCK_FILE)) {
+    const existingPid = fs.readFileSync(LOCK_FILE, "utf-8").trim();
+    try {
+      process.kill(Number(existingPid), 0);
+      log("INFO", "Command listener already running in another instance, skipping");
+      return;
+    } catch {
+      fs.unlinkSync(LOCK_FILE);
+    }
+  }
+
+  fs.writeFileSync(LOCK_FILE, String(process.pid));
+
+  const cleanup = () => {
+    try {
+      fs.unlinkSync(LOCK_FILE);
+    } catch {}
+  };
+  process.on("exit", cleanup);
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
+
   let offset = 0;
   while (true) {
     try {

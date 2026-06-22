@@ -8,7 +8,7 @@ import {
 import {
   getCandles15m,
 } from "./price-feed";
-import { checkExitConditions } from "./indicators";
+import { checkExitConditions, BollingerBand } from "./indicators";
 import { executeFullExit, ExitResult } from "./exit-executor";
 import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
@@ -32,19 +32,14 @@ interface TrackedPosition {
 }
 
 export interface PositionSnapshot {
-  positionAddress: string;
   poolAddress: string;
-  tokenXSymbol: string;
-  tokenYSymbol: string;
-  price: number;
+  positionAddress: string;
   rsi: number;
-  bbUpper: number;
+  bb: BollingerBand;
+  price: number;
   isInRange: boolean;
   isOORRight: boolean;
   isOORLeft: boolean;
-  pnl: PNLData | null;
-  state: PositionState;
-  createdAt: number;
 }
 
 export let lastPositionSnapshots: PositionSnapshot[] = [];
@@ -54,7 +49,7 @@ const inFlightSet = new Set<string>();
 const oorRightLastNotified = new Map<string, number>();
 const oorLeftLastNotified = new Map<string, number>();
 const wasOOR = new Set<string>();
-const lastIndicatorData = new Map<string, { price: number; rsi: number; bbUpper: number }>();
+const lastIndicatorData = new Map<string, { price: number; rsi: number; bb: BollingerBand }>();
 const positionCreatedAt = new Map<string, number>();
 
 async function handleShutdown(): Promise<void> {
@@ -195,7 +190,7 @@ export async function startMonitor(): Promise<void> {
           lastIndicatorData.set(posKey, {
             price: currentPrice,
             rsi: snapshot.rsi,
-            bbUpper: snapshot.bb.upper,
+            bb: snapshot.bb,
           });
 
           log("INFO", `Position ${posKey.slice(0, 8)}...`, {
@@ -372,19 +367,14 @@ export async function startMonitor(): Promise<void> {
         const key = t.position.positionPubkey.toBase58();
         const ind = lastIndicatorData.get(key);
         return {
-          positionAddress: key,
           poolAddress: t.position.poolAddress.toBase58(),
-          tokenXSymbol: t.position.tokenXSymbol,
-          tokenYSymbol: t.position.tokenYSymbol,
-          price: ind?.price ?? 0,
+          positionAddress: key,
           rsi: ind?.rsi ?? 0,
-          bbUpper: ind?.bbUpper ?? 0,
+          bb: ind?.bb ?? { upper: 0, middle: 0, lower: 0 },
+          price: ind?.price ?? 0,
           isInRange: t.position.isInRange,
           isOORRight: t.position.isOORRight,
           isOORLeft: t.position.isOORLeft,
-          pnl: t.position.pnl,
-          state: t.state,
-          createdAt: positionCreatedAt.get(key) ?? Date.now(),
         };
       });
 
