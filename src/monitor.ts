@@ -3,6 +3,7 @@ import { connection, wallet, logWalletInfo } from "./wallet";
 import {
   fetchAllActivePositions,
   ActivePosition,
+  PNLData,
 } from "./position-fetcher";
 import {
   getCandles15m,
@@ -31,11 +32,31 @@ interface TrackedPosition {
   state: PositionState;
 }
 
+export interface PositionSnapshot {
+  positionAddress: string;
+  poolAddress: string;
+  tokenXSymbol: string;
+  tokenYSymbol: string;
+  price: number;
+  rsi: number;
+  bbUpper: number;
+  isInRange: boolean;
+  isOORRight: boolean;
+  isOORLeft: boolean;
+  pnl: PNLData | null;
+  state: PositionState;
+  createdAt: number;
+}
+
+export let lastPositionSnapshots: PositionSnapshot[] = [];
+
 let isShuttingDown = false;
 const inFlightSet = new Set<string>();
 const oorRightLastNotified = new Map<string, number>();
 const oorLeftLastNotified = new Map<string, number>();
 const wasOOR = new Set<string>();
+const lastIndicatorData = new Map<string, { price: number; rsi: number; bbUpper: number }>();
+const positionCreatedAt = new Map<string, number>();
 
 async function handleShutdown(): Promise<void> {
   if (isShuttingDown) return;
@@ -68,10 +89,13 @@ export async function startMonitor(): Promise<void> {
     logError("Failed to fetch positions on startup", err);
   }
 
-  trackedPositions = initialPositions.map((p) => ({
-    position: p,
-    state: "MONITORING" as PositionState,
-  }));
+  trackedPositions = initialPositions.map((p) => {
+    const key = p.positionPubkey.toBase58();
+    if (!positionCreatedAt.has(key)) {
+      positionCreatedAt.set(key, Date.now());
+    }
+    return { position: p, state: "MONITORING" as PositionState };
+  });
 
   initTelegram();
   notifyAgentStart({
@@ -114,6 +138,10 @@ export async function startMonitor(): Promise<void> {
                 pos.positionPubkey.toBase58()
             )
           ) {
+            const key = pos.positionPubkey.toBase58();
+            if (!positionCreatedAt.has(key)) {
+              positionCreatedAt.set(key, Date.now());
+            }
             trackedPositions.push({
               position: pos,
               state: "MONITORING",
@@ -165,6 +193,12 @@ export async function startMonitor(): Promise<void> {
           const currentPrice = candles[candles.length - 1].close;
 
           const snapshot = checkExitConditions(candles);
+
+          lastIndicatorData.set(posKey, {
+            price: currentPrice,
+            rsi: snapshot.rsi,
+            bbUpper: snapshot.bb.upper,
+          });
 
           log("INFO", `Position ${posKey.slice(0, 8)}...`, {
             rsi: snapshot.rsi.toFixed(2),
@@ -332,6 +366,29 @@ export async function startMonitor(): Promise<void> {
     if (trackedPositions.length === 0) {
       log("INFO", "No positions to monitor");
     }
+
+    // Rebuild snapshots for /positions command
+    lastPositionSnapshots = trackedPositions
+      .filter((t) => t.state !== "EXITED")
+      .map((t) => {
+        const key = t.position.positionPubkey.toBase58();
+        const ind = lastIndicatorData.get(key);
+        return {
+          positionAddress: key,
+          poolAddress: t.position.poolAddress.toBase58(),
+          tokenXSymbol: t.position.tokenXSymbol,
+          tokenYSymbol: t.position.tokenYSymbol,
+          price: ind?.price ?? 0,
+          rsi: ind?.rsi ?? 0,
+          bbUpper: ind?.bbUpper ?? 0,
+          isInRange: t.position.isInRange,
+          isOORRight: t.position.isOORRight,
+          isOORLeft: t.position.isOORLeft,
+          pnl: t.position.pnl,
+          state: t.state,
+          createdAt: positionCreatedAt.get(key) ?? Date.now(),
+        };
+      });
 
     await sleep(CONFIG.pollIntervalMs);
   }

@@ -1,5 +1,6 @@
 import { log, logError } from "./logger";
 import { CONFIG } from "./config";
+import { lastPositionSnapshots } from "./monitor";
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
@@ -375,6 +376,70 @@ export async function handleCancelCommand(chatId: number): Promise<void> {
     pendingInput.delete(chatId);
     await sendTelegramMessage("❌ Input cancelled", String(chatId));
   }
+}
+
+export async function handlePositionsCommand(chatId: number): Promise<void> {
+  if (!isAuthorized(chatId)) return;
+
+  const snapshots = lastPositionSnapshots;
+  if (snapshots.length === 0) {
+    await sendTelegramMessage(
+      "📍 No active positions being monitored.",
+      String(chatId)
+    );
+    return;
+  }
+
+  const lines: string[] = [
+    `<b>📍 Active Positions (${snapshots.length})</b>`,
+    "",
+  ];
+
+  let totalValue = 0;
+
+  for (let i = 0; i < snapshots.length; i++) {
+    const pos = snapshots[i];
+    const pnl = pos.pnl;
+    const pnlEmoji = pnl ? (pnl.pnlPercent >= 0 ? "🟢" : "🔴") : "";
+    const pnlSign = pnl && pnl.pnlPercent >= 0 ? "+" : "";
+    const pnlPct = pnl ? `${pnlSign}${pnl.pnlPercent.toFixed(4)}%` : "N/A";
+    const pnlSol =
+      pnl && pnl.pnlSol !== undefined
+        ? `${pnl.pnlSol >= 0 ? "+" : ""}${pnl.pnlSol.toFixed(7)} SOL`
+        : "";
+
+    const inRangeStr = pos.isInRange
+      ? "✅"
+      : pos.isOORRight
+        ? "🔴 OOR Right"
+        : "🟡 OOR Left";
+
+    const ageMs = Date.now() - pos.createdAt;
+    const ageHours = Math.floor(ageMs / 3600000);
+    const ageMins = Math.floor((ageMs % 3600000) / 60000);
+    const ageStr =
+      ageHours > 0 ? `${ageHours}h ${ageMins}m` : `${ageMins}m`;
+
+    if (pnl) {
+      totalValue += pnl.currentValueSol;
+    }
+
+    lines.push(
+      `${i + 1}. <b>${pos.tokenXSymbol}/${pos.tokenYSymbol}</b>`,
+      `   Position: <code>${pos.positionAddress.slice(0, 8)}...</code>`,
+      `   Price: ${pos.price}`,
+      `   RSI(${CONFIG.rsiPeriod}): ${pos.rsi.toFixed(2)}`,
+      `   BB Upper: ${pos.bbUpper}`,
+      `   In Range: ${inRangeStr}`,
+      `   PNL: ${pnlEmoji} ${pnlPct} ${pnlSol}`.trim(),
+      `   Age: ${ageStr}`,
+      `   ${"─".repeat(16)}`,
+    );
+  }
+
+  lines.push(`Total Value: ${totalValue.toFixed(4)} SOL`);
+
+  await sendTelegramMessage(lines.join("\n"), String(chatId));
 }
 
 export { pendingInput, isAuthorized };

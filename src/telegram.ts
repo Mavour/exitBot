@@ -5,6 +5,7 @@ import { SwapResult } from "./jupiter-swap";
 import {
   handleMenuCommand,
   handleStatusCommand,
+  handlePositionsCommand,
   handleTextInput,
   handleCallbackQuery,
   handleStopCommand,
@@ -250,6 +251,8 @@ async function handleUpdate(update: any): Promise<void> {
     await handleMenuCommand(chatId);
   } else if (text === "/status") {
     await handleStatusCommand(chatId);
+  } else if (text === "/positions") {
+    await handlePositionsCommand(chatId);
   } else if (text === "/stop") {
     await handleStopCommand(chatId);
   } else if (text === "/start") {
