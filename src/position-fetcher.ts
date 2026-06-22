@@ -24,6 +24,8 @@ export interface ActivePosition {
   tokenYSymbol: string;
   activeBinId: number;
   isOORRight: boolean;
+  isOORLeft: boolean;
+  isInRange: boolean;
   totalXAmount: string;
   totalYAmount: string;
   unclaimedFeesX: string;
@@ -182,7 +184,9 @@ export async function fetchAllActivePositions(
         continue;
       }
 
+      const fromBinId = posInfo.lowerBinId;
       const toBinId = posInfo.upperBinId;
+      const activeB = activeBin.binId;
 
       positions.push({
         poolAddress: poolPubkey,
@@ -193,8 +197,10 @@ export async function fetchAllActivePositions(
         tokenMint: pool.tokenXMint,
         tokenXSymbol: baseSymbol,
         tokenYSymbol: quoteSymbol,
-        activeBinId: activeBin.binId,
-        isOORRight: activeBin.binId > toBinId,
+        activeBinId: activeB,
+        isOORRight: activeB > toBinId,
+        isOORLeft: activeB < fromBinId,
+        isInRange: activeB >= fromBinId && activeB <= toBinId,
         totalXAmount: posInfo.totalXAmount,
         totalYAmount: posInfo.totalYAmount,
         unclaimedFeesX: posInfo.feeX.toString(),

@@ -75,6 +75,24 @@ export async function notifyOORRight(params: {
   await sendMessage(msg);
 }
 
+export async function notifyOORLeft(params: {
+  positionAddress: string;
+  poolAddress: string;
+  activeBinId: number;
+  fromBinId: number;
+}): Promise<void> {
+  if (!enabled) return;
+  const msg = [
+    "<b>⚠️ OUT OF RANGE — LEFT</b>",
+    "",
+    `<b>Position:</b> <code>${params.positionAddress}</code>`,
+    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>Active Bin:</b> ${params.activeBinId} &lt; Min Bin: ${params.fromBinId}`,
+    "Status: Holding 100% SOL — monitoring for re-entry",
+  ].join("\n");
+  await sendMessage(msg);
+}
+
 export async function notifyExitTriggered(params: {
   positionAddress: string;
   poolAddress: string;

@@ -17,6 +17,7 @@ import {
   notifyExitSuccess,
   notifyExitFailed,
   notifyOORRight,
+  notifyOORLeft,
 } from "./telegram";
 
 const REQUIRED_CANDLES = 60;
@@ -30,6 +31,7 @@ interface TrackedPosition {
 
 let isShuttingDown = false;
 const inFlightSet = new Set<string>();
+const oorLeftLastNotified = new Map<string, number>();
 
 function handleShutdown(): void {
   if (isShuttingDown) return;
@@ -141,8 +143,11 @@ export async function startMonitor(): Promise<void> {
         // Re-fetch active bin — price moves every cycle
         try {
           const freshBin = await pos.dlmmPool.getActiveBin();
-          pos.activeBinId = freshBin.binId;
-          pos.isOORRight = freshBin.binId > pos.binRange.toBinId;
+          const abId = freshBin.binId;
+          pos.activeBinId = abId;
+          pos.isOORRight = abId > pos.binRange.toBinId;
+          pos.isOORLeft = abId < pos.binRange.fromBinId;
+          pos.isInRange = abId >= pos.binRange.fromBinId && abId <= pos.binRange.toBinId;
         } catch (err) {
           logError(
             `Failed to refresh active bin for ${posKey}`,
@@ -177,8 +182,30 @@ export async function startMonitor(): Promise<void> {
           continue;
         }
 
+        // Out-of-range left → notify (throttled), skip RSI/BB, do NOT exit
+        if (pos.isOORLeft) {
+          log("WARN", "Position is OUT-OF-RANGE LEFT", {
+            positionAddress: posKey,
+            activeBinId: pos.activeBinId,
+            fromBinId: pos.binRange.fromBinId,
+          });
+          const hourMs = 60 * 60 * 1000;
+          const lastNotified = oorLeftLastNotified.get(posKey) ?? 0;
+          if (Date.now() - lastNotified > hourMs) {
+            notifyOORLeft({
+              positionAddress: posKey,
+              poolAddress: pos.poolAddress.toBase58(),
+              activeBinId: pos.activeBinId,
+              fromBinId: pos.binRange.fromBinId,
+            });
+            oorLeftLastNotified.set(posKey, Date.now());
+          }
+          continue;
+        }
+
         inFlightSet.add(posKey);
 
+        // Only check RSI/BB when position is in range
         try {
           const candles = await getCandles15m(
             pos.tokenMint,
