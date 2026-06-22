@@ -282,8 +282,6 @@ export async function startMonitor(): Promise<void> {
             tracked.state = "EXITED";
             log("EXIT", "Position exited successfully", {
               positionAddress: posKey,
-              claimedFeeX: result.claimedFeeX,
-              claimedFeeY: result.claimedFeeY,
               receivedX: result.receivedX,
               receivedY: result.receivedY,
               txCount: result.txSignatures.length,
@@ -292,8 +290,6 @@ export async function startMonitor(): Promise<void> {
               positionAddress: posKey,
               tokenXSymbol: pos.tokenXSymbol,
               tokenYSymbol: pos.tokenYSymbol,
-              claimedFeeX: result.claimedFeeX,
-              claimedFeeY: result.claimedFeeY,
               receivedX: result.receivedX,
               receivedY: result.receivedY,
               txSignatures: result.txSignatures,

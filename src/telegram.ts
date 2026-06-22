@@ -131,8 +131,6 @@ export async function notifyExitSuccess(params: {
   positionAddress: string;
   tokenXSymbol: string;
   tokenYSymbol: string;
-  claimedFeeX: string;
-  claimedFeeY: string;
   receivedX: string;
   receivedY: string;
   txSignatures: string[];
@@ -150,10 +148,6 @@ export async function notifyExitSuccess(params: {
     "<b>💰 Received</b>",
     `${params.tokenXSymbol}: ${params.receivedX}`,
     `${params.tokenYSymbol}: ${params.receivedY}`,
-    "",
-    "<b>🎁 Claimed Fees</b>",
-    `${params.tokenXSymbol}: ${params.claimedFeeX}`,
-    `${params.tokenYSymbol}: ${params.claimedFeeY}`,
   ];
   if (params.pnl) {
     const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";

@@ -33,16 +33,14 @@ async function getTokenDecimals(
   return info.decimals;
 }
 
-function parseHumanAmount(amount: string): number {
-  const n = parseFloat(amount);
-  return Number.isFinite(n) ? n : 0;
-}
-
 async function getTokenValueUsd(
   mint: string,
-  humanAmount: number
+  rawAmount: string,
+  decimals: number
 ): Promise<number> {
   try {
+    const humanAmount = Number(rawAmount) / Math.pow(10, decimals);
+    if (!Number.isFinite(humanAmount) || humanAmount <= 0) return 0;
     const url = `https://price.jup.ag/v4/price?ids=${mint}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
     if (!res.ok) return 0;
@@ -81,35 +79,46 @@ export async function autoSwapAfterExit(params: {
     return result;
   }
 
-  // Check minimum value
-  const humanAmount = parseHumanAmount(params.receivedAmount);
-  if (humanAmount <= 0) {
-    result.reason = `Zero or negative amount (${params.receivedAmount})`;
-    return result;
-  }
-
-  const usdValue = await getTokenValueUsd(
-    params.receivedTokenMint,
-    humanAmount
-  );
-  if (usdValue <= CONFIG.autoSwapMinUsd) {
-    result.reason = `${params.receivedTokenSymbol} value $${usdValue.toFixed(3)} below $${CONFIG.autoSwapMinUsd.toFixed(2)} minimum`;
-    return result;
-  }
-
-  // Get decimals and convert to raw amount
+  // Get token decimals
   let decimals: number;
   try {
-    decimals = await getTokenDecimals(
-      params.receivedTokenMint,
-      params.connection
-    );
+    decimals = await getTokenDecimals(params.receivedTokenMint, params.connection);
   } catch (err) {
     result.reason = `Failed to get token decimals: ${err instanceof Error ? err.message : String(err)}`;
     return result;
   }
 
-  const rawAmount = BigInt(Math.round(humanAmount * 10 ** decimals));
+  // Re-fetch actual token balance from wallet after exit
+  let rawAmount: bigint;
+  try {
+    const tokenAccounts = await withRpcFallback(conn =>
+      conn.getParsedTokenAccountsByOwner(params.wallet.publicKey, {
+        mint: new PublicKey(params.receivedTokenMint),
+      })
+    );
+    const balance = tokenAccounts.value[0]?.account.data.parsed.info.tokenAmount;
+    if (!balance || balance.amount === "0") {
+      result.reason = `No ${params.receivedTokenSymbol} balance in wallet after exit`;
+      return result;
+    }
+    rawAmount = BigInt(balance.amount);
+    decimals = balance.decimals;
+    result.inputAmount = (Number(rawAmount) / Math.pow(10, decimals)).toFixed(decimals);
+  } catch (err) {
+    result.reason = `Failed to fetch token balance: ${err instanceof Error ? err.message : String(err)}`;
+    return result;
+  }
+
+  // Check minimum value
+  const usdValue = await getTokenValueUsd(
+    params.receivedTokenMint,
+    rawAmount.toString(),
+    decimals
+  );
+  if (usdValue <= CONFIG.autoSwapMinUsd) {
+    result.reason = `${params.receivedTokenSymbol} value $${usdValue.toFixed(3)} below $${CONFIG.autoSwapMinUsd.toFixed(2)} minimum`;
+    return result;
+  }
 
   // Get Jupiter quote
   let quote: any;

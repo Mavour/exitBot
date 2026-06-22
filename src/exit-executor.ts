@@ -17,8 +17,6 @@ import { withRpcFallback } from "./rpc-manager";
 export interface ExitResult {
   success: boolean;
   positionAddress: string;
-  claimedFeeX: string;
-  claimedFeeY: string;
   receivedX: string;
   receivedY: string;
   txSignatures: string[];
@@ -101,20 +99,6 @@ async function sendClaimTxs(
   return sigs;
 }
 
-async function getPositionData(position: ActivePosition, wallet: Keypair) {
-  const positionsByUser = await withRpcFallback(conn =>
-    position.dlmmPool.getPositionsByUserAndLbPair(wallet.publicKey)
-  );
-  const posKey = position.positionPubkey.toBase58();
-  const found = positionsByUser.userPositions.find(
-    (p) => p.publicKey.toBase58() === posKey
-  );
-  if (!found) {
-    throw new Error("Position data not found on chain");
-  }
-  return found;
-}
-
 export async function executeFullExit(
   position: ActivePosition,
   wallet: Keypair,
@@ -125,8 +109,6 @@ export async function executeFullExit(
   const result: ExitResult = {
     success: false,
     positionAddress: posAddr,
-    claimedFeeX: "0",
-    claimedFeeY: "0",
     receivedX: "0",
     receivedY: "0",
     txSignatures: [],
@@ -141,35 +123,11 @@ export async function executeFullExit(
   });
 
   try {
-    const lbPosition = await getPositionData(position, wallet);
-
-    // Step 1 — Claim all swap fees
-    log("EXIT", "Step 1: Claiming swap fees", { dryRun });
-
-    if (!dryRun) {
-      const claimTxs = await position.dlmmPool.claimAllSwapFee({
-        owner: wallet.publicKey,
-        positions: [lbPosition],
-      });
-
-      const sigs = await sendClaimTxs(connection, claimTxs, wallet);
-      result.txSignatures.push(...sigs);
-      log("EXIT", "Claim fees confirmed", { signatures: sigs });
-    } else {
-      log("EXIT", "DRY RUN: Would claim swap fees", {
-        unclaimedFeeX: position.unclaimedFeesX,
-        unclaimedFeeY: position.unclaimedFeesY,
-      });
-    }
-
-    result.claimedFeeX = position.unclaimedFeesX;
-    result.claimedFeeY = position.unclaimedFeesY;
-
-    // Step 2 — Remove all liquidity
-    log("EXIT", "Step 2: Removing all liquidity", { dryRun });
+    // Step 1 — Remove liquidity (claims fees + removes liq + closes position)
+    log("EXIT", "Step 1: Removing liquidity with claim and close", { dryRun });
 
     if (dryRun) {
-      log("EXIT", "DRY RUN: Would remove all liquidity", {
+      log("EXIT", "DRY RUN: Would remove all liquidity (claim + close)", {
         totalX: position.totalXAmount,
         totalY: position.totalYAmount,
         fromBinId: position.binRange.fromBinId,
@@ -184,7 +142,7 @@ export async function executeFullExit(
         fromBinId: position.binRange.fromBinId,
         toBinId: position.binRange.toBinId,
         bps: new BN(10000),
-        shouldClaimAndClose: false,
+        shouldClaimAndClose: true,
       });
 
       const sigs = await sendClaimTxs(connection, removeTxs, wallet);
@@ -200,26 +158,9 @@ export async function executeFullExit(
       });
     }
 
-    // Step 3 — Close position
-    log("EXIT", "Step 3: Closing position", { dryRun });
+    // Step 2 — Auto-swap non-SOL token to SOL
+    log("EXIT", "Step 2: Auto-swap residual tokens", { dryRun });
 
-    if (!dryRun) {
-      const closeTx = await position.dlmmPool.closePosition({
-        owner: wallet.publicKey,
-        position: lbPosition,
-      });
-
-      const sig = await sendWithRetry(connection, closeTx, wallet);
-      result.txSignatures.push(sig);
-      log("EXIT", "Close position confirmed", { signature: sig });
-    } else {
-      log("EXIT", "DRY RUN: Would close position (recover rent SOL)");
-    }
-
-    // Step 4 — Auto-swap non-SOL token to SOL
-    log("EXIT", "Step 4: Auto-swap residual tokens", { dryRun });
-
-    // Determine which token is the non-SOL one
     const isXSol =
       position.baseTokenMint ===
       "So11111111111111111111111111111111111111112";
@@ -229,23 +170,20 @@ export async function executeFullExit(
 
     let swapTokenMint: string | null = null;
     let swapTokenSymbol: string | null = null;
-    let swapAmount: string | null = null;
 
     if (!isXSol) {
       swapTokenMint = position.baseTokenMint;
       swapTokenSymbol = position.tokenXSymbol;
-      swapAmount = result.receivedX;
     } else if (!isYSol) {
       swapTokenMint = position.quoteTokenMint;
       swapTokenSymbol = position.tokenYSymbol;
-      swapAmount = result.receivedY;
     }
 
-    if (swapTokenMint && swapAmount) {
+    if (swapTokenMint) {
       result.swapResult = await autoSwapAfterExit({
         receivedTokenMint: swapTokenMint,
         receivedTokenSymbol: swapTokenSymbol ?? "?",
-        receivedAmount: swapAmount,
+        receivedAmount: "0",
         wallet,
         connection,
         dryRun,
