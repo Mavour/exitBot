@@ -65,24 +65,21 @@ function parsePNL(
   poolData: Record<string, unknown>
 ): PNLData | null {
   try {
-    const depositStr = (poolData as any).deposit_value ?? (poolData as any).depositValue;
-    const currentStr = (poolData as any).current_value ?? (poolData as any).currentValue;
-    const feeStr = (poolData as any).total_fee_usd ?? (poolData as any).totalFeeUsd;
+    const pnlSolStr = (poolData as any).pnlSol;
+    const pnlPctStr = (poolData as any).pnlPctChange;
+    const feeStr = (poolData as any).unclaimedFeesSol;
+    const depositStr = (poolData as any).totalDepositSol;
+    const balanceStr = (poolData as any).balancesSol;
 
-    if (depositStr == null || currentStr == null) return null;
+    if (pnlSolStr == null) return null;
 
-    const depositUsd = Number(depositStr);
-    const currentUsd = Number(currentStr);
-    const feeUsd = feeStr != null ? Number(feeStr) : 0;
-    if (!Number.isFinite(depositUsd) || !Number.isFinite(currentUsd)) return null;
+    const pnlSol = Number(pnlSolStr);
+    const pnlPercent = pnlPctStr != null ? Number(pnlPctStr) : 0;
+    const totalFeeEarnedSol = feeStr != null ? Number(feeStr) : 0;
+    const depositValueSol = depositStr != null ? Number(depositStr) : 0;
+    const currentValueSol = balanceStr != null ? Number(balanceStr) : 0;
 
-    // Approximate SOL price as 1:1 for USD-denominated values from API
-    // If API returns USD values, we treat them as SOL-equivalent
-    const depositValueSol = depositUsd;
-    const currentValueSol = currentUsd;
-    const totalFeeEarnedSol = feeUsd;
-    const pnlSol = currentValueSol + totalFeeEarnedSol - depositValueSol;
-    const pnlPercent = depositValueSol > 0 ? (pnlSol / depositValueSol) * 100 : 0;
+    if (!Number.isFinite(pnlSol)) return null;
 
     return { depositValueSol, currentValueSol, totalFeeEarnedSol, pnlSol, pnlPercent };
   } catch {
