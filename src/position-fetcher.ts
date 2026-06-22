@@ -2,7 +2,7 @@ import {
   Connection,
   PublicKey,
 } from "@solana/web3.js";
-import DLMM from "@meteora-ag/dlmm";
+import DLMM, { getPriceOfBinByBinId } from "@meteora-ag/dlmm";
 import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
 
@@ -31,7 +31,6 @@ export interface ActivePosition {
   unclaimedFeesX: string;
   unclaimedFeesY: string;
   binRange: { fromBinId: number; toBinId: number };
-  binPriceRange: { minPrice: number; maxPrice: number };
   pnl: PNLData | null;
 }
 
@@ -60,33 +59,6 @@ async function getTokenSymbol(mint: string): Promise<string> {
   }
 
   return tokenSymbolCache[mint] || mint.slice(0, 6) + "...";
-}
-
-async function fetchPositionPriceRanges(
-  poolAddress: string,
-  walletAddress: string
-): Promise<Map<string, { minPrice: number; maxPrice: number }>> {
-  const map = new Map<string, { minPrice: number; maxPrice: number }>();
-  try {
-    const url = `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl?status=open&user=${walletAddress}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) return map;
-    const data = await res.json() as any;
-    const positions = data?.positions;
-    if (!Array.isArray(positions)) return map;
-    for (const p of positions) {
-      console.log('RAW POSITION:', JSON.stringify(p, null, 2));
-      const addr = p.positionAddress as string;
-      const min = Number(p.minPrice);
-      const max = Number(p.maxPrice);
-      if (addr && Number.isFinite(min) && Number.isFinite(max)) {
-        map.set(addr, { minPrice: min, maxPrice: max });
-      }
-    }
-  } catch {
-    // Non-critical; fallback handled below
-  }
-  return map;
 }
 
 function parsePNL(
@@ -186,9 +158,7 @@ export async function fetchAllActivePositions(
 
     const baseSymbol = await getTokenSymbol(pool.tokenXMint);
     const quoteSymbol = await getTokenSymbol(pool.tokenYMint);
-
-    // Fetch price ranges from Meteora PNL API (eliminates SDK bin→price conversion)
-    const priceRangeMap = await fetchPositionPriceRanges(pool.poolAddress, walletAddress);
+    const poolPrice = Number(pool.poolPrice);
 
     for (const posAddrStr of pool.listPositions) {
       const posPubkey = new PublicKey(posAddrStr);
@@ -209,22 +179,40 @@ export async function fetchAllActivePositions(
         continue;
       }
 
-      const fromBinId = posInfo.lowerBinId;
-      const toBinId = posInfo.upperBinId;
+      // OOR detection — use API fields directly
+      const isOutOfRange = pool.outOfRange === true ||
+        (Array.isArray(pool.positionsOutOfRange) && pool.positionsOutOfRange.includes(posAddrStr));
 
-      // Price range sourced from Meteora PNL API (no SDK bin→price conversion)
-      const priceRange = priceRangeMap.get(posAddrStr);
-      if (!priceRange) {
-        log("WARN", "No price range from API, skipping position", { positionAddress: posAddrStr });
-        continue;
+      // Determine OOR direction using midpoint of bin price range
+      const binStep = dlmmPool.lbPair.parameters.binStep;
+      const fromBinPrice = Number(getPriceOfBinByBinId(posInfo.lowerBinId, binStep));
+      const toBinPrice = Number(getPriceOfBinByBinId(posInfo.upperBinId, binStep));
+      const midPrice = (fromBinPrice + toBinPrice) / 2;
+
+      let isOORRight = false;
+      let isOORLeft = false;
+      let isInRange = true;
+
+      if (isOutOfRange) {
+        if (Number.isFinite(poolPrice) && Number.isFinite(midPrice)) {
+          if (poolPrice > midPrice) {
+            isOORRight = true;
+            isInRange = false;
+          } else {
+            isOORLeft = true;
+            isInRange = false;
+          }
+        }
       }
 
-      log("INFO", "Position price range", {
+      log("INFO", "OOR status", {
         positionAddress: posAddrStr,
-        minPrice: priceRange.minPrice,
-        maxPrice: priceRange.maxPrice,
-        fromBinId,
-        toBinId,
+        isInRange,
+        isOORLeft,
+        isOORRight,
+        poolPrice,
+        fromBinId: posInfo.lowerBinId,
+        toBinId: posInfo.upperBinId,
       });
 
       positions.push({
@@ -236,9 +224,9 @@ export async function fetchAllActivePositions(
         tokenMint: pool.tokenXMint,
         tokenXSymbol: baseSymbol,
         tokenYSymbol: quoteSymbol,
-        isOORRight: false,
-        isOORLeft: false,
-        isInRange: true,
+        isOORRight,
+        isOORLeft,
+        isInRange,
         totalXAmount: posInfo.totalXAmount,
         totalYAmount: posInfo.totalYAmount,
         unclaimedFeesX: posInfo.feeX.toString(),
@@ -247,7 +235,6 @@ export async function fetchAllActivePositions(
           fromBinId: posInfo.lowerBinId,
           toBinId: posInfo.upperBinId,
         },
-        binPriceRange: { minPrice: priceRange.minPrice, maxPrice: priceRange.maxPrice },
         pnl: parsePNL(pool),
       });
     }

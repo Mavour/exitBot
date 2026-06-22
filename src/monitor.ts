@@ -162,17 +162,12 @@ export async function startMonitor(): Promise<void> {
 
           const currentPrice = candles[candles.length - 1].close;
 
-          // Price-based OOR detection — zero RPC calls
-          pos.isOORRight = currentPrice > pos.binPriceRange.maxPrice;
-          pos.isOORLeft  = currentPrice < pos.binPriceRange.minPrice;
-          pos.isInRange  = !pos.isOORRight && !pos.isOORLeft;
-
+          // OOR flags are set by position-fetcher from API fields
           // Out-of-range right → exit immediately, skip indicator check
           if (pos.isOORRight) {
             log("WARN", "Position is OUT-OF-RANGE RIGHT", {
               positionAddress: posKey,
               price: currentPrice,
-              maxBinPrice: pos.binPriceRange.maxPrice,
             });
             notifyOORRight({
               positionAddress: posKey,
@@ -198,7 +193,6 @@ export async function startMonitor(): Promise<void> {
             log("WARN", "Position is OUT-OF-RANGE LEFT", {
               positionAddress: posKey,
               price: currentPrice,
-              minBinPrice: pos.binPriceRange.minPrice,
             });
             const hourMs = 60 * 60 * 1000;
             const lastNotified = oorLeftLastNotified.get(posKey) ?? 0;
