@@ -1,15 +1,32 @@
+import fs from "fs";
 import { log, logError } from "./logger";
 import { CONFIG } from "./config";
 import { PNLData } from "./position-fetcher";
 import { SwapResult } from "./jupiter-swap";
+import {
+  handleMenuCommand,
+  handleStatusCommand,
+  handlePositionsCommand,
+  handleTextInput,
+  handleCallbackQuery,
+  handleStopCommand,
+  handleStartCommand,
+  handleCancelCommand,
+  pendingInput,
+  isAuthorized,
+} from "./telegram-menu";
 
 const TELEGRAM_API = "https://api.telegram.org";
+const LOCK_FILE = "/tmp/dlmm-exit-agent-menu.lock";
 let enabled = false;
 
 export function initTelegram(): void {
   if (CONFIG.telegramBotToken && CONFIG.telegramChatId) {
     enabled = true;
     log("INFO", "Telegram notifications enabled");
+    startCommandListener().catch((err) =>
+      logError("Command listener error", err)
+    );
   } else {
     log("INFO", "Telegram not configured, skipping");
   }
@@ -246,4 +263,87 @@ export async function notifyExitFailed(params: {
     `<b>Error:</b> ${params.error.slice(0, 500)}`,
   ].join("\n");
   await sendMessage(msg);
+}
+
+async function getUpdates(offset: number): Promise<any[]> {
+  const url = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/getUpdates?offset=${offset}&timeout=10`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) {
+    throw new Error(`Telegram getUpdates HTTP ${res.status}`);
+  }
+  const json = (await res.json()) as any;
+  return json.result ?? [];
+}
+
+async function handleUpdate(update: any): Promise<void> {
+  const chatId =
+    update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
+  if (!chatId || !isAuthorized(chatId)) return;
+
+  if (update.callback_query) {
+    await handleCallbackQuery(
+      chatId,
+      update.callback_query.data,
+      update.callback_query.id
+    );
+    return;
+  }
+
+  const text = (update.message?.text ?? "").trim();
+  if (!text) return;
+
+  if (pendingInput.has(chatId)) {
+    await handleTextInput(chatId, text);
+    return;
+  }
+
+  if (text === "/menu") {
+    await handleMenuCommand(chatId);
+  } else if (text === "/status") {
+    await handleStatusCommand(chatId);
+  } else if (text === "/positions") {
+    await handlePositionsCommand(chatId);
+  } else if (text === "/stop") {
+    await handleStopCommand(chatId);
+  } else if (text === "/start") {
+    await handleStartCommand(chatId);
+  } else if (text === "/cancel") {
+    await handleCancelCommand(chatId);
+  }
+}
+
+async function startCommandListener(): Promise<void> {
+  if (fs.existsSync(LOCK_FILE)) {
+    const existingPid = fs.readFileSync(LOCK_FILE, "utf-8").trim();
+    try {
+      process.kill(Number(existingPid), 0);
+      log("INFO", "Command listener already running in another instance, skipping");
+      return;
+    } catch {
+      fs.unlinkSync(LOCK_FILE);
+    }
+  }
+
+  fs.writeFileSync(LOCK_FILE, String(process.pid));
+
+  const cleanup = () => {
+    try { fs.unlinkSync(LOCK_FILE); } catch {}
+  };
+  process.on("exit", cleanup);
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
+
+  let offset = 0;
+  while (true) {
+    try {
+      const updates = await getUpdates(offset);
+      for (const update of updates) {
+        offset = update.update_id + 1;
+        await handleUpdate(update);
+      }
+    } catch (err) {
+      logError("Telegram update poll failed", err);
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
 }
