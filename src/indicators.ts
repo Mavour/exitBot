@@ -9,7 +9,7 @@ export interface BollingerBand {
 
 export interface IndicatorSnapshot {
   shouldExit: boolean;
-  smoothedRsi: number;
+  rsi: number;
   bb: BollingerBand;
   price: number;
   timestamp: number;
@@ -57,55 +57,6 @@ export function calculateRawRSI(closes: number[], period: number): number[] {
   return rsiValues;
 }
 
-export function applySMA(values: number[], length: number): number[] {
-  const result: number[] = new Array(values.length).fill(NaN);
-
-  // Get only non-NaN values for computation
-  const validIndices: number[] = [];
-  for (let i = 0; i < values.length; i++) {
-    if (!isNaN(values[i])) {
-      validIndices.push(i);
-    }
-  }
-
-  const validValues = validIndices.map((i) => values[i]);
-
-  if (validValues.length < length) {
-    return result;
-  }
-
-  let sum = 0;
-  for (let i = 0; i < length; i++) {
-    sum += validValues[i];
-  }
-
-  result[validIndices[length - 1]] = sum / length;
-
-  for (let i = length; i < validValues.length; i++) {
-    sum += validValues[i] - validValues[i - length];
-    result[validIndices[i]] = sum / length;
-  }
-
-  return result;
-}
-
-export function getSmoothedRSI(
-  closes: number[],
-  rsiPeriod: number,
-  smoothingLength: number
-): number {
-  const raw = calculateRawRSI(closes, rsiPeriod);
-  const smoothed = applySMA(raw, smoothingLength);
-  const last = smoothed[smoothed.length - 1];
-  if (isNaN(last)) {
-    throw new Error(
-      `Not enough data for smoothed RSI. ` +
-      `Need at least ${rsiPeriod + smoothingLength + 5} candles, got ${closes.length}`
-    );
-  }
-  return last;
-}
-
 export function calculateBB(
   closes: number[],
   period: number,
@@ -138,19 +89,17 @@ export function checkExitConditions(candles: Candle[]): IndicatorSnapshot {
   const price = lastCandle.close;
   const fallback: IndicatorSnapshot = {
     shouldExit: false,
-    smoothedRsi: 0,
+    rsi: 0,
     bb: { upper: 0, middle: 0, lower: 0 },
     price,
     timestamp: lastCandle.timestamp,
   };
 
-  let smoothedRsi: number;
+  let rsiValue: number;
   try {
-    smoothedRsi = getSmoothedRSI(
-      closes,
-      CONFIG.rsiPeriod,
-      CONFIG.rsiSmoothingLength
-    );
+    const rawRsi = calculateRawRSI(closes, CONFIG.rsiPeriod);
+    rsiValue = rawRsi[rawRsi.length - 1];
+    if (isNaN(rsiValue)) throw new Error("RSI value is NaN");
   } catch {
     return fallback;
   }
@@ -162,11 +111,11 @@ export function checkExitConditions(candles: Candle[]): IndicatorSnapshot {
     return fallback;
   }
 
-  const shouldExit = smoothedRsi >= CONFIG.rsiThreshold && price > bb.upper;
+  const shouldExit = rsiValue >= CONFIG.rsiThreshold && price > bb.upper;
 
   return {
     shouldExit,
-    smoothedRsi,
+    rsi: rsiValue,
     bb,
     price,
     timestamp: lastCandle.timestamp,

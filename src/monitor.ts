@@ -76,7 +76,6 @@ export async function startMonitor(): Promise<void> {
     positionsCount: trackedPositions.length,
     dryRun: CONFIG.dryRun,
     rsiPeriod: CONFIG.rsiPeriod,
-    rsiSmoothingLength: CONFIG.rsiSmoothingLength,
     rsiThreshold: CONFIG.rsiThreshold,
     bbPeriod: CONFIG.bbPeriod,
   });
@@ -172,7 +171,7 @@ export async function startMonitor(): Promise<void> {
           notifyExitTriggered({
             positionAddress: posKey,
             poolAddress: pos.poolAddress.toBase58(),
-            smoothedRsi: 0,
+            rsi: 0,
             price: 0,
             bbUpper: 0,
             trigger: "OOR_RIGHT",
@@ -215,7 +214,7 @@ export async function startMonitor(): Promise<void> {
           const snapshot = checkExitConditions(candles);
 
           // If RSI is 0, indicators couldn't be computed (not enough data)
-          if (snapshot.smoothedRsi === 0 && snapshot.bb.upper === 0) {
+          if (snapshot.rsi === 0 && snapshot.bb.upper === 0) {
             log("WARN", `Insufficient data for position ${posKey.slice(0, 8)}...`, {
               candlesCount: candles.length,
               price: snapshot.price.toFixed(8),
@@ -224,7 +223,7 @@ export async function startMonitor(): Promise<void> {
           }
 
           log("INFO", `Position ${posKey.slice(0, 8)}...`, {
-            smoothedRsi: snapshot.smoothedRsi.toFixed(2),
+            rsi: snapshot.rsi.toFixed(2),
             bbUpper: snapshot.bb.upper.toFixed(8),
             bbMiddle: snapshot.bb.middle.toFixed(8),
             bbLower: snapshot.bb.lower.toFixed(8),
@@ -235,7 +234,7 @@ export async function startMonitor(): Promise<void> {
           if (snapshot.shouldExit) {
             log("EXIT", "EXIT CONDITIONS MET", {
               positionAddress: posKey,
-              smoothedRsi: snapshot.smoothedRsi.toFixed(2),
+              rsi: snapshot.rsi.toFixed(2),
               price: snapshot.price.toFixed(8),
               bbUpper: snapshot.bb.upper.toFixed(8),
               poolAddress: pos.poolAddress.toBase58(),
@@ -243,7 +242,7 @@ export async function startMonitor(): Promise<void> {
             notifyExitTriggered({
               positionAddress: posKey,
               poolAddress: pos.poolAddress.toBase58(),
-              smoothedRsi: snapshot.smoothedRsi,
+              rsi: snapshot.rsi,
               price: snapshot.price,
               bbUpper: snapshot.bb.upper,
               trigger: "RSI_BB",

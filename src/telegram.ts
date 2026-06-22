@@ -96,7 +96,7 @@ export async function notifyOORLeft(params: {
 export async function notifyExitTriggered(params: {
   positionAddress: string;
   poolAddress: string;
-  smoothedRsi: number;
+  rsi: number;
   price: number;
   bbUpper: number;
   trigger: "RSI_BB" | "OOR_RIGHT";
@@ -112,7 +112,7 @@ export async function notifyExitTriggered(params: {
   ];
   if (params.trigger === "RSI_BB") {
     lines.push(
-      `<b>RSI(2)+SMA(14):</b> ${params.smoothedRsi.toFixed(2)}`,
+      `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
       `<b>Price:</b> ${params.price}`,
       `<b>BB Upper:</b> ${params.bbUpper}`,
     );

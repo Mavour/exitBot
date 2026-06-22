@@ -25,7 +25,6 @@ async function main(): Promise<void> {
     mode: CONFIG.dryRun ? "DRY RUN" : "LIVE",
     pollIntervalMs: CONFIG.pollIntervalMs,
     rsiPeriod: CONFIG.rsiPeriod,
-    rsiSmoothingLength: CONFIG.rsiSmoothingLength,
     rsiThreshold: CONFIG.rsiThreshold,
     bbPeriod: CONFIG.bbPeriod,
     bbStdDev: CONFIG.bbStdDev,

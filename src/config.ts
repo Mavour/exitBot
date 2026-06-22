@@ -51,7 +51,6 @@ export const CONFIG = {
   pollIntervalMs: parseNumber("POLL_INTERVAL_MS", 60000, 1000),
   dryRun: parseBool("DRY_RUN", true),
   rsiPeriod: parseNumber("RSI_PERIOD", 2, 1),
-  rsiSmoothingLength: parseNumber("RSI_SMOOTHING_LENGTH", 14, 1),
   rsiThreshold: parseNumber("RSI_THRESHOLD", 90, 1),
   bbPeriod: parseNumber("BB_PERIOD", 20, 2),
   bbStdDev: parseNumber("BB_STD_DEV", 2, 0.1),
