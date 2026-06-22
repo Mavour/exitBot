@@ -9,7 +9,6 @@ import {
   handlePositionsCommand,
   handleTextInput,
   handleCallbackQuery,
-  handleStopCommand,
   handleStartCommand,
   handleCancelCommand,
   pendingInput,
@@ -44,8 +43,7 @@ export async function setupBotCommands(): Promise<void> {
           { command: "menu", description: "⚙️ Bot Configuration" },
           { command: "positions", description: "📍 Active Positions" },
           { command: "status", description: "📊 Bot Status" },
-          { command: "stop", description: "🛑 Stop Bot" },
-          { command: "start", description: "▶️ Start Bot" },
+          { command: "start", description: "🔄 Restart Bot" },
         ],
       }),
       signal: AbortSignal.timeout(10000),
@@ -303,9 +301,7 @@ async function handleUpdate(update: any): Promise<void> {
     await handleStatusCommand(chatId);
   } else if (text === "/positions") {
     await handlePositionsCommand(chatId);
-  } else if (text === "/stop") {
-    await handleStopCommand(chatId);
-  } else if (text === "/start") {
+  } else   if (text === "/start") {
     await handleStartCommand(chatId);
   } else if (text === "/cancel") {
     await handleCancelCommand(chatId);

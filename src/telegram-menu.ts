@@ -1,7 +1,6 @@
 import { log, logError } from "./logger";
 import { CONFIG } from "./config";
 import { wallet } from "./wallet";
-import { lastPositionSnapshots } from "./monitor";
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
@@ -350,44 +349,14 @@ export async function handleTextInput(
   await restartBot(chatId);
 }
 
-export async function handleStopCommand(chatId: number): Promise<void> {
-  if (!isAuthorized(chatId)) return;
-  await sendTelegramMessage(
-    "🛑 <b>Bot stopped.</b>\nSend /start to resume monitoring.",
-    String(chatId)
-  );
-  await new Promise((r) => setTimeout(r, 1500));
-  try {
-    execSync("pm2 stop dlmm-exit-agent --no-autorestart", { stdio: "ignore" });
-  } catch {
-    // process already stopped — ignore
-  }
-}
-
 export async function handleStartCommand(chatId: number): Promise<void> {
   if (!isAuthorized(chatId)) return;
-  try {
-    const raw = execSync("pm2 jlist", {
-      stdio: ["pipe", "pipe", "ignore"],
-    }).toString();
-    const procs = JSON.parse(raw) as any[];
-    const proc = procs.find((p: any) => p.name === "dlmm-exit-agent");
-    if (proc?.pm2_env?.status === "online") {
-      await sendTelegramMessage(
-        "⚠️ Bot is already running.\nUse /positions to check active positions.",
-        String(chatId)
-      );
-      return;
-    }
-  } catch {
-    // pm2 jlist failed — proceed to start
-  }
-  await sendTelegramMessage("▶️ Starting bot...", String(chatId));
+  await sendTelegramMessage("🔄 Restarting bot...", String(chatId));
   await new Promise((r) => setTimeout(r, 1500));
   try {
-    execSync("pm2 start ecosystem.config.js", { stdio: "ignore" });
-  } catch {
     execSync("pm2 restart dlmm-exit-agent", { stdio: "ignore" });
+  } catch {
+    // Process killed by PM2 restart — expected
   }
 }
 
@@ -408,68 +377,40 @@ export async function handlePositionsCommand(chatId: number): Promise<void> {
     const url = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${wallet.publicKey.toBase58()}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
     const data = (await res.json()) as any;
-
     const pools = data?.pools ?? [];
     const totalPositions = data?.total?.totalPositions ?? 0;
 
     if (totalPositions === 0 || pools.length === 0) {
-      await sendTelegramMessage(
-        "📍 No active positions being monitored.",
-        String(chatId)
-      );
+      await sendTelegramMessage("📍 No active positions being monitored.", String(chatId));
       return;
     }
 
-    let msg = `<b>📍 Active Positions (${totalPositions})</b>\n\n`;
+    let totalValue = 0;
+    const lines: string[] = [`<b>📍 Active Positions (${totalPositions})</b>`, ""];
 
     for (const pool of pools) {
-      const positionAddress = pool.listPositions?.[0] ?? "N/A";
-      const shortPos =
-        positionAddress.slice(0, 8) + "..." + positionAddress.slice(-4);
-      const shortPool =
-        pool.poolAddress.slice(0, 8) + "..." + pool.poolAddress.slice(-4);
-
+      const posAddr = pool.listPositions?.[0] ?? "N/A";
+      const shortPos = posAddr.slice(0, 8) + "..." + posAddr.slice(-4);
       const pnlSol = parseFloat(pool.pnlSol ?? "0");
-      const pnlPct = parseFloat(pool.pnlSolPctChange ?? "0") * 100;
-      const pnlEmoji = pnlSol >= 0 ? "🟢" : "🔴";
-      const pnlSign = pnlSol >= 0 ? "+" : "";
-
-      const balanceSol = parseFloat(pool.balancesSol ?? "0").toFixed(4);
-      const depositSol = parseFloat(pool.totalDepositSol ?? "0").toFixed(4);
-      const unclaimedFees = parseFloat(pool.unclaimedFeesSol ?? "0").toFixed(6);
+      const balanceSol = parseFloat(pool.balancesSol ?? "0");
+      const feesSol = parseFloat(pool.unclaimedFeesSol ?? "0");
       const isOOR = pool.outOfRange === true;
-      const rangeStatus = isOOR ? "⚠️ Out of Range" : "✅ In Range";
 
-      const snapshot = lastPositionSnapshots.find(
-        (s) => s.poolAddress === pool.poolAddress
+      totalValue += balanceSol;
+
+      lines.push(
+        `<b>${pool.tokenX ?? "?"}/${pool.tokenY ?? "?"}</b>`,
+        `   Position: <code>${shortPos}</code>`,
+        `   Balance: ${balanceSol.toFixed(4)} SOL`,
+        `   PNL: ${pnlSol >= 0 ? "🟢 +" : "🔴 "}${pnlSol.toFixed(7)} SOL`,
+        `   Fees: ${feesSol.toFixed(6)} SOL`,
+        `   Status: ${isOOR ? "⚠️ Out of Range" : "✅ In Range"}`,
+        `   ${"─".repeat(16)}`,
       );
-      const rsiStr = snapshot
-        ? snapshot.rsi.toFixed(2)
-        : "N/A (next poll)";
-      const bbUpperStr = snapshot
-        ? snapshot.bb.upper.toFixed(8)
-        : "N/A (next poll)";
-      const priceStr = snapshot
-        ? snapshot.price.toFixed(8)
-        : pool.poolPrice?.toFixed(8) ?? "N/A";
-
-      msg += `<b>${pool.tokenX ?? "?"}/${pool.tokenY ?? "?"}</b>\n`;
-      msg += `Position: <code>${shortPos}</code>\n`;
-      msg += `Pool: <code>${shortPool}</code>\n`;
-      msg += `Price: ${priceStr}\n`;
-      msg += `RSI(${CONFIG.rsiPeriod}): ${rsiStr}\n`;
-      msg += `BB Upper: ${bbUpperStr}\n`;
-      msg += `Range: ${rangeStatus}\n`;
-      msg += `PNL: ${pnlEmoji} ${pnlSign}${pnlPct.toFixed(4)}% (${pnlSign}${pnlSol.toFixed(7)} SOL)\n`;
-      msg += `Fees: ${unclaimedFees} SOL\n`;
-      msg += `Balance: ${balanceSol} SOL\n`;
-      msg += `${"─".repeat(16)}\n`;
     }
 
-    const totalSol = parseFloat(data?.total?.balancesSol ?? "0").toFixed(4);
-    msg += `\n💼 <b>Total Value: ${totalSol} SOL</b>`;
-
-    await sendTelegramMessage(msg, String(chatId));
+    lines.push(`💼 <b>Total Value: ${totalValue.toFixed(4)} SOL</b>`);
+    await sendTelegramMessage(lines.join("\n"), String(chatId));
   } catch (err) {
     await sendTelegramMessage(
       `❌ Failed to fetch positions\nError: ${String(err).slice(0, 100)}`,
