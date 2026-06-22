@@ -160,6 +160,7 @@ export async function startMonitor(): Promise<void> {
         try {
           const candles = await getCandles15m(
             pos.dexScreenerPairAddress,
+            pos.poolAddress.toBase58(),
             REQUIRED_CANDLES
           );
 

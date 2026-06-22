@@ -26,19 +26,8 @@ interface DexScreenerPair {
   baseToken: { address: string; name: string; symbol: string };
   quoteToken: { address: string; name: string; symbol: string };
   priceUsd: string;
-  txns: {
-    h24: number;
-    h6: number;
-    h1: number;
-    m5: number;
-  };
-  volume: {
-    h24: number;
-    h6: number;
-    h1: number;
-    m5: number;
-  };
-  priceChange: Record<string, unknown>;
+  txns: { h24: { buys: number; sells: number } };
+  volume: { h24: number };
   liquidity: { usd: number };
   fdv: number;
   marketCap: number;
@@ -49,6 +38,21 @@ interface DexScreenerPair {
 interface DexScreenerSearchResponse {
   schemaVersion: string;
   pairs: DexScreenerPair[] | null;
+}
+
+interface MeteoraOHLCVEntry {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+interface MeteoraOHLCVResponse {
+  start_time: number;
+  end_time: number;
+  data: MeteoraOHLCVEntry[];
 }
 
 async function fetchWithRetry(
@@ -106,7 +110,7 @@ async function fetchWithRetry(
   throw lastErr || new Error(`Failed after ${retries} retries: ${url}`);
 }
 
-export async function getCandles15m(
+async function fetchDexScreenerCandles(
   pairAddress: string,
   limit: number
 ): Promise<Candle[]> {
@@ -128,7 +132,7 @@ export async function getCandles15m(
 
   const slices = data.pairs.slice(-limit);
 
-  const candles: Candle[] = slices.map((entry) => ({
+  return slices.map((entry) => ({
     timestamp: entry.timestamp,
     open: parseFloat(entry.open),
     high: parseFloat(entry.high),
@@ -136,8 +140,64 @@ export async function getCandles15m(
     close: parseFloat(entry.close),
     volume: parseFloat(entry.volume),
   }));
+}
 
-  return candles;
+async function fetchMeteoraCandles(
+  poolAddress: string,
+  limit: number
+): Promise<Candle[]> {
+  // Meteora only has 5m OHLCV, so fetch 3x more and aggregate to 15m
+  const fiveMinLimit = limit * 3 + 5; // extra buffer
+  const url = `https://dlmm.datapi.meteora.ag/pools/${poolAddress}/ohlcv?timeframe=5m&limit=${fiveMinLimit}`;
+
+  log("INFO", "Falling back to Meteora OHLCV API", { url });
+
+  const response = await fetchWithRetry(url);
+  const data = (await response.json()) as MeteoraOHLCVResponse;
+
+  if (!data.data || data.data.length < 3) {
+    throw new Error(
+      `Meteora OHLCV returned ${data.data?.length ?? 0} 5m candles`
+    );
+  }
+
+  const fiveMinCandles = data.data.sort(
+    (a, b) => a.timestamp - b.timestamp
+  );
+
+  // Aggregate 5m → 15m candles (group every 3)
+  const candles15m: Candle[] = [];
+  for (let i = 0; i + 2 < fiveMinCandles.length; i += 3) {
+    const group = fiveMinCandles.slice(i, i + 3);
+    candles15m.push({
+      timestamp: group[0].timestamp,
+      open: group[0].open,
+      high: Math.max(...group.map((c) => c.high)),
+      low: Math.min(...group.map((c) => c.low)),
+      close: group[group.length - 1].close,
+      volume: group.reduce((sum, c) => sum + c.volume, 0),
+    });
+  }
+
+  return candles15m.slice(-limit);
+}
+
+export async function getCandles15m(
+  pairAddress: string,
+  poolAddress: string,
+  limit: number
+): Promise<Candle[]> {
+  // Try DexScreener first
+  try {
+    return await fetchDexScreenerCandles(pairAddress, limit);
+  } catch (err) {
+    log("WARN", "DexScreener chart failed, trying Meteora OHLCV", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
+  // Fallback: Meteora OHLCV (5m → aggregate to 15m)
+  return await fetchMeteoraCandles(poolAddress, limit);
 }
 
 export async function getDexScreenerPairFromMints(
@@ -158,7 +218,6 @@ export async function getDexScreenerPairFromMints(
   );
 
   if (meteoraPairs.length === 0) {
-    // Fallback: use first Solana pair regardless of dex
     const solFallback = data.pairs.find((p) => p.chainId === "solana");
     if (solFallback) {
       log("WARN", "No Meteora pair found, using first Solana pair as fallback", {
@@ -171,7 +230,10 @@ export async function getDexScreenerPairFromMints(
   }
 
   // Pick the pair with highest 24h tx count
-  meteoraPairs.sort((a, b) => (b.txns?.h24 ?? 0) - (a.txns?.h24 ?? 0));
+  meteoraPairs.sort(
+    (a, b) => (b.txns?.h24?.buys ?? 0) + (b.txns?.h24?.sells ?? 0) -
+      ((a.txns?.h24?.buys ?? 0) + (a.txns?.h24?.sells ?? 0))
+  );
   const best = meteoraPairs[0];
 
   log("INFO", `Found DexScreener Meteora pair`, {
