@@ -6,7 +6,6 @@ import {
 } from "./position-fetcher";
 import {
   getCandles15m,
-  getDexScreenerPairFromMints,
 } from "./price-feed";
 import { checkExitConditions } from "./indicators";
 import { executeFullExit, ExitResult } from "./exit-executor";
@@ -45,24 +44,10 @@ export async function startMonitor(): Promise<void> {
   let pollCycle = 0;
 
   // Fetch & resolve on startup
-  const initialPositions = await fetchAllActivePositions(
+    const initialPositions = await fetchAllActivePositions(
     wallet.publicKey,
     connection
   );
-
-  for (const pos of initialPositions) {
-    try {
-      const pairAddr = await getDexScreenerPairFromMints(
-        pos.baseTokenMint
-      );
-      pos.dexScreenerPairAddress = pairAddr;
-    } catch (err) {
-      logError(
-        `Failed to resolve DexScreener pair for ${pos.baseTokenMint}`,
-        err
-      );
-    }
-  }
 
   trackedPositions = initialPositions.map((p) => ({
     position: p,
@@ -100,17 +85,6 @@ export async function startMonitor(): Promise<void> {
             pos.positionPubkey.toBase58()
         )
       ) {
-        try {
-          const pairAddr = await getDexScreenerPairFromMints(
-            pos.baseTokenMint
-          );
-          pos.dexScreenerPairAddress = pairAddr;
-        } catch (err) {
-          logError(
-            `Failed to resolve DexScreener pair for ${pos.baseTokenMint}`,
-            err
-          );
-        }
         trackedPositions.push({
           position: pos,
           state: "MONITORING",
@@ -159,12 +133,20 @@ export async function startMonitor(): Promise<void> {
 
         try {
           const candles = await getCandles15m(
-            pos.dexScreenerPairAddress,
             pos.poolAddress.toBase58(),
             REQUIRED_CANDLES
           );
 
           const snapshot = checkExitConditions(candles);
+
+          // If RSI is 0, indicators couldn't be computed (not enough data)
+          if (snapshot.smoothedRsi === 0 && snapshot.bb.upper === 0) {
+            log("WARN", `Insufficient data for position ${posKey.slice(0, 8)}...`, {
+              candlesCount: candles.length,
+              price: snapshot.price.toFixed(8),
+            });
+            continue;
+          }
 
           log("INFO", `Position ${posKey.slice(0, 8)}...`, {
             smoothedRsi: snapshot.smoothedRsi.toFixed(2),

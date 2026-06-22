@@ -136,13 +136,31 @@ export function checkExitConditions(candles: Candle[]): IndicatorSnapshot {
   const closes = candles.map((c) => c.close);
   const lastCandle = candles[candles.length - 1];
   const price = lastCandle.close;
+  const fallback: IndicatorSnapshot = {
+    shouldExit: false,
+    smoothedRsi: 0,
+    bb: { upper: 0, middle: 0, lower: 0 },
+    price,
+    timestamp: lastCandle.timestamp,
+  };
 
-  const smoothedRsi = getSmoothedRSI(
-    closes,
-    CONFIG.rsiPeriod,
-    CONFIG.rsiSmoothingLength
-  );
-  const bb = calculateBB(closes, CONFIG.bbPeriod, CONFIG.bbStdDev);
+  let smoothedRsi: number;
+  try {
+    smoothedRsi = getSmoothedRSI(
+      closes,
+      CONFIG.rsiPeriod,
+      CONFIG.rsiSmoothingLength
+    );
+  } catch {
+    return fallback;
+  }
+
+  let bb: BollingerBand;
+  try {
+    bb = calculateBB(closes, CONFIG.bbPeriod, CONFIG.bbStdDev);
+  } catch {
+    return fallback;
+  }
 
   const shouldExit = smoothedRsi >= CONFIG.rsiThreshold && price > bb.upper;
 

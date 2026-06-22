@@ -1,4 +1,4 @@
-import { log, logError } from "./logger";
+import { log } from "./logger";
 
 export interface Candle {
   timestamp: number;
@@ -16,28 +16,6 @@ interface DexScreenerChartEntry {
   low: string;
   close: string;
   volume: string;
-}
-
-interface DexScreenerPair {
-  chainId: string;
-  dexId: string;
-  url: string;
-  pairAddress: string;
-  baseToken: { address: string; name: string; symbol: string };
-  quoteToken: { address: string; name: string; symbol: string };
-  priceUsd: string;
-  txns: { h24: { buys: number; sells: number } };
-  volume: { h24: number };
-  liquidity: { usd: number };
-  fdv: number;
-  marketCap: number;
-  pairCreatedAt: number;
-  info: Record<string, unknown>;
-}
-
-interface DexScreenerSearchResponse {
-  schemaVersion: string;
-  pairs: DexScreenerPair[] | null;
 }
 
 interface MeteoraOHLCVEntry {
@@ -183,13 +161,12 @@ async function fetchMeteoraCandles(
 }
 
 export async function getCandles15m(
-  pairAddress: string,
   poolAddress: string,
   limit: number
 ): Promise<Candle[]> {
-  // Try DexScreener first
+  // Try DexScreener first (pair address == pool address for Meteora DLMM)
   try {
-    return await fetchDexScreenerCandles(pairAddress, limit);
+    return await fetchDexScreenerCandles(poolAddress, limit);
   } catch (err) {
     log("WARN", "DexScreener chart failed, trying Meteora OHLCV", {
       error: err instanceof Error ? err.message : String(err),
@@ -200,48 +177,4 @@ export async function getCandles15m(
   return await fetchMeteoraCandles(poolAddress, limit);
 }
 
-export async function getDexScreenerPairFromMints(
-  baseTokenMint: string
-): Promise<string> {
-  const url = `https://api.dexscreener.com/latest/dex/search?q=${baseTokenMint}`;
 
-  const response = await fetchWithRetry(url);
-  const data = (await response.json()) as DexScreenerSearchResponse;
-
-  if (!data.pairs || data.pairs.length === 0) {
-    throw new Error(`No DexScreener pairs found for token ${baseTokenMint}`);
-  }
-
-  // Filter: Solana chain + Meteora dex
-  const meteoraPairs = data.pairs.filter(
-    (p) => p.chainId === "solana" && p.dexId === "meteora"
-  );
-
-  if (meteoraPairs.length === 0) {
-    const solFallback = data.pairs.find((p) => p.chainId === "solana");
-    if (solFallback) {
-      log("WARN", "No Meteora pair found, using first Solana pair as fallback", {
-        pairAddress: solFallback.pairAddress,
-        dexId: solFallback.dexId,
-      });
-      return solFallback.pairAddress;
-    }
-    throw new Error(`No Solana pairs found for token ${baseTokenMint}`);
-  }
-
-  // Pick the pair with highest 24h tx count
-  meteoraPairs.sort(
-    (a, b) => (b.txns?.h24?.buys ?? 0) + (b.txns?.h24?.sells ?? 0) -
-      ((a.txns?.h24?.buys ?? 0) + (a.txns?.h24?.sells ?? 0))
-  );
-  const best = meteoraPairs[0];
-
-  log("INFO", `Found DexScreener Meteora pair`, {
-    pairAddress: best.pairAddress,
-    baseSymbol: best.baseToken.symbol,
-    quoteSymbol: best.quoteToken.symbol,
-    txns24h: best.txns?.h24 ?? 0,
-  });
-
-  return best.pairAddress;
-}
