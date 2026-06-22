@@ -392,6 +392,7 @@ export async function handlePositionsCommand(chatId: number): Promise<void> {
       const posAddr = pool.listPositions?.[0] ?? "N/A";
       const shortPos = posAddr.slice(0, 8) + "..." + posAddr.slice(-4);
       const pnlSol = parseFloat(pool.pnlSol ?? "0");
+      const pnlPct = parseFloat(pool.pnlSolPctChange ?? "0");
       const balanceSol = parseFloat(pool.balancesSol ?? "0");
       const feesSol = parseFloat(pool.unclaimedFeesSol ?? "0");
       const isOOR = pool.outOfRange === true;
@@ -402,7 +403,7 @@ export async function handlePositionsCommand(chatId: number): Promise<void> {
         `<b>${pool.tokenX ?? "?"}/${pool.tokenY ?? "?"}</b>`,
         `   Position: <code>${shortPos}</code>`,
         `   Balance: ${balanceSol.toFixed(4)} SOL`,
-        `   PNL: ${pnlSol >= 0 ? "🟢 +" : "🔴 "}${pnlSol.toFixed(7)} SOL`,
+        `   PNL: ${pnlSol >= 0 ? "🟢 +" : "🔴 "}${pnlSol.toFixed(7)} SOL (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(4)}%)`,
         `   Fees: ${feesSol.toFixed(6)} SOL`,
         `   Status: ${isOOR ? "⚠️ Out of Range" : "✅ In Range"}`,
         `   ${"─".repeat(16)}`,
