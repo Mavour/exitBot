@@ -5,6 +5,14 @@ import {
 import DLMM from "@meteora-ag/dlmm";
 import { log, logError } from "./logger";
 
+export interface PNLData {
+  depositValueSol: number;
+  currentValueSol: number;
+  totalFeeEarnedSol: number;
+  pnlSol: number;
+  pnlPercent: number;
+}
+
 export interface ActivePosition {
   poolAddress: PublicKey;
   positionPubkey: PublicKey;
@@ -12,6 +20,8 @@ export interface ActivePosition {
   baseTokenMint: string;
   quoteTokenMint: string;
   tokenMint: string;
+  tokenXSymbol: string;
+  tokenYSymbol: string;
   activeBinId: number;
   isOORRight: boolean;
   totalXAmount: string;
@@ -19,18 +29,63 @@ export interface ActivePosition {
   unclaimedFeesX: string;
   unclaimedFeesY: string;
   binRange: { fromBinId: number; toBinId: number };
+  pnl: PNLData | null;
 }
 
-interface ApiPoolItem {
-  poolAddress: string;
-  tokenXMint: string;
-  tokenYMint: string;
-  listPositions: string[];
+const SOL_MINT = "So11111111111111111111111111111111111111112";
+const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+
+let tokenSymbolCache: Record<string, string> | null = null;
+
+async function getTokenSymbol(mint: string): Promise<string> {
+  if (mint === SOL_MINT) return "SOL";
+  if (mint === USDC_MINT) return "USDC";
+
+  if (!tokenSymbolCache) {
+    try {
+      const res = await fetch("https://token.jup.ag/all", {
+        signal: AbortSignal.timeout(10000),
+      });
+      const data = (await res.json()) as Array<{ address: string; symbol: string }>;
+      tokenSymbolCache = {};
+      for (const t of data) {
+        tokenSymbolCache[t.address] = t.symbol;
+      }
+    } catch {
+      tokenSymbolCache = {};
+    }
+  }
+
+  return tokenSymbolCache[mint] || mint.slice(0, 6) + "...";
 }
 
-interface ApiPortfolioResponse {
-  totalPositions: number;
-  pools: ApiPoolItem[];
+function parsePNL(
+  poolData: Record<string, unknown>
+): PNLData | null {
+  try {
+    const depositStr = (poolData as any).deposit_value ?? (poolData as any).depositValue;
+    const currentStr = (poolData as any).current_value ?? (poolData as any).currentValue;
+    const feeStr = (poolData as any).total_fee_usd ?? (poolData as any).totalFeeUsd;
+
+    if (depositStr == null || currentStr == null) return null;
+
+    const depositUsd = Number(depositStr);
+    const currentUsd = Number(currentStr);
+    const feeUsd = feeStr != null ? Number(feeStr) : 0;
+    if (!Number.isFinite(depositUsd) || !Number.isFinite(currentUsd)) return null;
+
+    // Approximate SOL price as 1:1 for USD-denominated values from API
+    // If API returns USD values, we treat them as SOL-equivalent
+    const depositValueSol = depositUsd;
+    const currentValueSol = currentUsd;
+    const totalFeeEarnedSol = feeUsd;
+    const pnlSol = currentValueSol + totalFeeEarnedSol - depositValueSol;
+    const pnlPercent = depositValueSol > 0 ? (pnlSol / depositValueSol) * 100 : 0;
+
+    return { depositValueSol, currentValueSol, totalFeeEarnedSol, pnlSol, pnlPercent };
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchAllActivePositions(
@@ -57,9 +112,9 @@ export async function fetchAllActivePositions(
     return [];
   }
 
-  let data: ApiPortfolioResponse;
+  let data: any;
   try {
-    data = (await response.json()) as ApiPortfolioResponse;
+    data = await response.json();
   } catch (err) {
     logError("Failed to parse Meteora Data API response", err);
     return [];
@@ -105,6 +160,9 @@ export async function fetchAllActivePositions(
       continue;
     }
 
+    const baseSymbol = await getTokenSymbol(pool.tokenXMint);
+    const quoteSymbol = await getTokenSymbol(pool.tokenYMint);
+
     for (const posAddrStr of pool.listPositions) {
       const posPubkey = new PublicKey(posAddrStr);
 
@@ -133,6 +191,8 @@ export async function fetchAllActivePositions(
         baseTokenMint: pool.tokenXMint,
         quoteTokenMint: pool.tokenYMint,
         tokenMint: pool.tokenXMint,
+        tokenXSymbol: baseSymbol,
+        tokenYSymbol: quoteSymbol,
         activeBinId: activeBin.binId,
         isOORRight: activeBin.binId > toBinId,
         totalXAmount: posInfo.totalXAmount,
@@ -143,6 +203,7 @@ export async function fetchAllActivePositions(
           fromBinId: posInfo.lowerBinId,
           toBinId: posInfo.upperBinId,
         },
+        pnl: parsePNL(pool),
       });
     }
   }

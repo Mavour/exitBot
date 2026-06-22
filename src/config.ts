@@ -65,4 +65,5 @@ export const CONFIG = {
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID || "",
   gmgnApiKey: process.env.GMGN_API_KEY || "",
+  autoSwapMinUsd: 0.10,
 } as const;

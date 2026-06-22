@@ -5,12 +5,12 @@ import {
   TransactionInstruction,
   TransactionMessage,
   VersionedTransaction,
-  sendAndConfirmTransaction,
   ComputeBudgetProgram,
 } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
 import { CONFIG } from "./config";
 import { ActivePosition } from "./position-fetcher";
+import { autoSwapAfterExit, SwapResult } from "./jupiter-swap";
 import { log, logError } from "./logger";
 
 export interface ExitResult {
@@ -23,6 +23,7 @@ export interface ExitResult {
   txSignatures: string[];
   dryRun: boolean;
   error?: string;
+  swapResult: SwapResult | null;
 }
 
 function buildPriorityFeeIx(): TransactionInstruction {
@@ -129,6 +130,7 @@ export async function executeFullExit(
     receivedY: "0",
     txSignatures: [],
     dryRun,
+    swapResult: null,
   };
 
   log("EXIT", `Starting exit for position ${posAddr}`, {
@@ -197,7 +199,7 @@ export async function executeFullExit(
       });
     }
 
-    // Step 3 — Close position (use closePositionIfEmpty for safety)
+    // Step 3 — Close position
     log("EXIT", "Step 3: Closing position", { dryRun });
 
     if (!dryRun) {
@@ -213,10 +215,55 @@ export async function executeFullExit(
       log("EXIT", "DRY RUN: Would close position (recover rent SOL)");
     }
 
+    // Step 4 — Auto-swap non-SOL token to SOL
+    log("EXIT", "Step 4: Auto-swap residual tokens", { dryRun });
+
+    // Determine which token is the non-SOL one
+    const isXSol =
+      position.baseTokenMint ===
+      "So11111111111111111111111111111111111111112";
+    const isYSol =
+      position.quoteTokenMint ===
+      "So11111111111111111111111111111111111111112";
+
+    let swapTokenMint: string | null = null;
+    let swapTokenSymbol: string | null = null;
+    let swapAmount: string | null = null;
+
+    if (!isXSol) {
+      swapTokenMint = position.baseTokenMint;
+      swapTokenSymbol = position.tokenXSymbol;
+      swapAmount = result.receivedX;
+    } else if (!isYSol) {
+      swapTokenMint = position.quoteTokenMint;
+      swapTokenSymbol = position.tokenYSymbol;
+      swapAmount = result.receivedY;
+    }
+
+    if (swapTokenMint && swapAmount) {
+      result.swapResult = await autoSwapAfterExit({
+        receivedTokenMint: swapTokenMint,
+        receivedTokenSymbol: swapTokenSymbol ?? "?",
+        receivedAmount: swapAmount,
+        wallet,
+        connection,
+        dryRun,
+      });
+    } else {
+      result.swapResult = {
+        success: true,
+        inputSymbol: "SOL",
+        inputAmount: "0",
+        outputAmount: "0",
+        reason: "Both tokens are SOL/USDC, no swap needed",
+      };
+    }
+
     result.success = true;
     log("EXIT", `Exit complete for position ${posAddr}`, {
       success: true,
       txCount: result.txSignatures.length,
+      swapResult: result.swapResult,
     });
   } catch (err) {
     result.success = false;

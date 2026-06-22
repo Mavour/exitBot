@@ -16,6 +16,7 @@ import {
   notifyExitTriggered,
   notifyExitSuccess,
   notifyExitFailed,
+  notifyOORRight,
 } from "./telegram";
 
 const REQUIRED_CANDLES = 60;
@@ -62,12 +63,12 @@ export async function startMonitor(): Promise<void> {
   }));
 
   initTelegram();
-  notifyAgentStart(
-    trackedPositions.length,
-    CONFIG.dryRun,
-    CONFIG.rsiThreshold,
-    CONFIG.pollIntervalMs
-  );
+  notifyAgentStart({
+    positionsCount: trackedPositions.length,
+    dryRun: CONFIG.dryRun,
+    rsiThreshold: CONFIG.rsiThreshold,
+    pollIntervalMs: CONFIG.pollIntervalMs,
+  });
 
   log("INFO", "Monitor started", {
     positionsCount: trackedPositions.length,
@@ -157,6 +158,21 @@ export async function startMonitor(): Promise<void> {
             activeBinId: pos.activeBinId,
             toBinId: pos.binRange.toBinId,
           });
+          notifyOORRight({
+            positionAddress: posKey,
+            poolAddress: pos.poolAddress.toBase58(),
+            activeBinId: pos.activeBinId,
+            toBinId: pos.binRange.toBinId,
+          });
+          notifyExitTriggered({
+            positionAddress: posKey,
+            poolAddress: pos.poolAddress.toBase58(),
+            smoothedRsi: 0,
+            price: 0,
+            bbUpper: 0,
+            trigger: "OOR_RIGHT",
+            pnl: pos.pnl,
+          });
           tracked.state = "EXIT_TRIGGERED";
           continue;
         }
@@ -197,13 +213,15 @@ export async function startMonitor(): Promise<void> {
               bbUpper: snapshot.bb.upper.toFixed(8),
               poolAddress: pos.poolAddress.toBase58(),
             });
-            notifyExitTriggered(
-              posKey,
-              pos.poolAddress.toBase58(),
-              snapshot.smoothedRsi,
-              snapshot.price,
-              snapshot.bb.upper
-            );
+            notifyExitTriggered({
+              positionAddress: posKey,
+              poolAddress: pos.poolAddress.toBase58(),
+              smoothedRsi: snapshot.smoothedRsi,
+              price: snapshot.price,
+              bbUpper: snapshot.bb.upper,
+              trigger: "RSI_BB",
+              pnl: pos.pnl,
+            });
             tracked.state = "EXIT_TRIGGERED";
           }
         } catch (err) {
@@ -241,26 +259,37 @@ export async function startMonitor(): Promise<void> {
               receivedY: result.receivedY,
               txCount: result.txSignatures.length,
             });
-            notifyExitSuccess(
-              posKey,
-              result.claimedFeeX,
-              result.claimedFeeY,
-              result.receivedX,
-              result.receivedY,
-              result.txSignatures.length,
-              result.dryRun
-            );
+            notifyExitSuccess({
+              positionAddress: posKey,
+              tokenXSymbol: pos.tokenXSymbol,
+              tokenYSymbol: pos.tokenYSymbol,
+              claimedFeeX: result.claimedFeeX,
+              claimedFeeY: result.claimedFeeY,
+              receivedX: result.receivedX,
+              receivedY: result.receivedY,
+              txSignatures: result.txSignatures,
+              dryRun: result.dryRun,
+              pnl: pos.pnl,
+              swapResult: result.swapResult,
+            });
           } else {
             tracked.state = "MONITORING";
             log("WARN", "Exit failed, reverting to MONITORING", {
               positionAddress: posKey,
               error: result.error,
             });
-            notifyExitFailed(posKey, result.error ?? "Unknown error");
+            notifyExitFailed({
+              positionAddress: posKey,
+              error: result.error ?? "Unknown error",
+            });
           }
         } catch (err) {
           tracked.state = "MONITORING";
           logError(`Unexpected error during exit of ${posKey}`, err);
+          notifyExitFailed({
+            positionAddress: posKey,
+            error: err instanceof Error ? err.message : String(err),
+          });
         } finally {
           inFlightSet.delete(posKey);
         }

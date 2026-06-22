@@ -1,122 +1,186 @@
 import { log, logError } from "./logger";
+import { CONFIG } from "./config";
+import { PNLData } from "./position-fetcher";
+import { SwapResult } from "./jupiter-swap";
 
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+const TELEGRAM_API = "https://api.telegram.org";
 let enabled = false;
-let startTime = Date.now();
 
 export function initTelegram(): void {
-  if (BOT_TOKEN && CHAT_ID) {
+  if (CONFIG.telegramBotToken && CONFIG.telegramChatId) {
     enabled = true;
     log("INFO", "Telegram notifications enabled");
   } else {
-    log(
-      "INFO",
-      "Telegram disabled — set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable"
-    );
+    log("INFO", "Telegram not configured, skipping");
   }
 }
 
-function fmt(val: string | number, decimals = 6): string {
-  const n = typeof val === "string" ? parseFloat(val) : val;
-  if (isNaN(n)) return String(val);
-  if (n >= 1000) return n.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  return n.toFixed(decimals);
-}
-
-export async function sendTelegramMessage(text: string): Promise<void> {
-  if (!enabled || !BOT_TOKEN || !CHAT_ID) return;
+async function sendMessage(text: string): Promise<void> {
+  if (!enabled) return;
   try {
-    const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-    const response = await fetch(url, {
+    const url = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/sendMessage`;
+    const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        chat_id: CHAT_ID,
+        chat_id: CONFIG.telegramChatId,
         text,
         parse_mode: "HTML",
         disable_web_page_preview: true,
       }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      logError("Telegram API error", new Error(`HTTP ${response.status}: ${body.slice(0, 200)}`));
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      logError("Telegram API error", new Error(`HTTP ${res.status}: ${body.slice(0, 200)}`));
     }
   } catch (err) {
     logError("Telegram send failed", err);
   }
 }
 
-export function notifyExitTriggered(
-  posAddr: string,
-  poolAddr: string,
-  rsi: number,
-  price: number,
-  bbUpper: number
-): void {
-  const msg = [
-    "<b>🚀 EXIT TRIGGERED</b>",
-    "",
-    `<b>Position:</b> <code>${posAddr}</code>`,
-    `<b>Pool:</b> <code>${poolAddr}</code>`,
-    `<b>RSI(2)+SMA(14):</b> ${rsi.toFixed(2)}`,
-    `<b>Price:</b> ${fmt(price)}`,
-    `<b>BB Upper:</b> ${fmt(bbUpper)}`,
-  ].join("\n");
-  sendTelegramMessage(msg);
-}
-
-export function notifyExitSuccess(
-  posAddr: string,
-  claimedFeeX: string,
-  claimedFeeY: string,
-  receivedX: string,
-  receivedY: string,
-  txCount: number,
-  dryRun: boolean
-): void {
-  const label = dryRun ? "🔍 DRY RUN EXIT" : "✅ EXIT SUCCESS";
-  const msg = [
-    `<b>${label}</b>`,
-    "",
-    `<b>Position:</b> <code>${posAddr}</code>`,
-    `<b>Claimed Fee X:</b> ${fmt(claimedFeeX)}`,
-    `<b>Claimed Fee Y:</b> ${fmt(claimedFeeY)}`,
-    `<b>Received X:</b> ${fmt(receivedX)}`,
-    `<b>Received Y:</b> ${fmt(receivedY)}`,
-    `<b>Tx count:</b> ${txCount}`,
-    dryRun ? "" : `<b>Explorer:</b> <a href="https://solscan.io/account/${posAddr}">solscan</a>`,
-  ].filter(Boolean).join("\n");
-  sendTelegramMessage(msg);
-}
-
-export function notifyExitFailed(
-  posAddr: string,
-  error: string
-): void {
-  const msg = [
-    "<b>❌ EXIT FAILED</b>",
-    "",
-    `<b>Position:</b> <code>${posAddr}</code>`,
-    `<b>Error:</b> ${error.slice(0, 500)}`,
-  ].join("\n");
-  sendTelegramMessage(msg);
-}
-
-export function notifyAgentStart(
-  positionsCount: number,
-  dryRun: boolean,
-  rsiThreshold: number,
-  pollIntervalMs: number
-): void {
+export async function notifyAgentStart(params: {
+  positionsCount: number;
+  dryRun: boolean;
+  rsiThreshold: number;
+  pollIntervalMs: number;
+}): Promise<void> {
+  if (!enabled) return;
   const msg = [
     "<b>🤖 Exit Agent Started</b>",
     "",
-    `<b>Positions monitored:</b> ${positionsCount}`,
-    `<b>Mode:</b> ${dryRun ? "🔍 DRY RUN" : "⚡ LIVE"}`,
-    `<b>RSI threshold:</b> ${rsiThreshold}`,
-    `<b>Poll interval:</b> ${(pollIntervalMs / 1000).toFixed(0)}s`,
+    `Positions monitored: ${params.positionsCount}`,
+    `Mode: ${params.dryRun ? "🔍 DRY RUN" : "🔴 LIVE"}`,
+    `RSI threshold: ${params.rsiThreshold}`,
+    `Poll interval: ${(params.pollIntervalMs / 1000).toFixed(0)}s`,
   ].join("\n");
-  sendTelegramMessage(msg);
+  await sendMessage(msg);
+}
+
+export async function notifyOORRight(params: {
+  positionAddress: string;
+  poolAddress: string;
+  activeBinId: number;
+  toBinId: number;
+}): Promise<void> {
+  if (!enabled) return;
+  const msg = [
+    "<b>⚠️ OUT OF RANGE — RIGHT</b>",
+    "",
+    `<b>Position:</b> <code>${params.positionAddress}</code>`,
+    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>Active Bin:</b> ${params.activeBinId} &gt; Max Bin: ${params.toBinId}`,
+    "Status: Earning zero fees — exiting now",
+  ].join("\n");
+  await sendMessage(msg);
+}
+
+export async function notifyExitTriggered(params: {
+  positionAddress: string;
+  poolAddress: string;
+  smoothedRsi: number;
+  price: number;
+  bbUpper: number;
+  trigger: "RSI_BB" | "OOR_RIGHT";
+  pnl: PNLData | null;
+}): Promise<void> {
+  if (!enabled) return;
+  const lines: string[] = [
+    "<b>🚀 EXIT TRIGGERED</b>",
+    "",
+    `<b>Position:</b> <code>${params.positionAddress}</code>`,
+    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>Trigger:</b> ${params.trigger === "OOR_RIGHT" ? "⚠️ Out of Range Right" : "📊 RSI+BB Signal"}`,
+  ];
+  if (params.trigger === "RSI_BB") {
+    lines.push(
+      `<b>RSI(2)+SMA(14):</b> ${params.smoothedRsi.toFixed(2)}`,
+      `<b>Price:</b> ${params.price}`,
+      `<b>BB Upper:</b> ${params.bbUpper}`,
+    );
+  }
+  if (params.pnl) {
+    const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
+    const prefix = params.pnl.pnlSol >= 0 ? "+" : "";
+    lines.push(
+      `<b>PNL:</b> ${sign} ${params.pnl.pnlPercent.toFixed(2)}% (${prefix}${params.pnl.pnlSol.toFixed(4)} SOL)`,
+    );
+  }
+  await sendMessage(lines.join("\n"));
+}
+
+export async function notifyExitSuccess(params: {
+  positionAddress: string;
+  tokenXSymbol: string;
+  tokenYSymbol: string;
+  claimedFeeX: string;
+  claimedFeeY: string;
+  receivedX: string;
+  receivedY: string;
+  txSignatures: string[];
+  dryRun: boolean;
+  pnl: PNLData | null;
+  swapResult: SwapResult | null;
+}): Promise<void> {
+  if (!enabled) return;
+  const label = params.dryRun ? "🔍 EXIT SIMULATED" : "✅ EXIT SUCCESS";
+  const lines: string[] = [
+    `<b>${label}</b>`,
+    "",
+    `<b>Position:</b> <code>${params.positionAddress}</code>`,
+    "",
+    "<b>💰 Received</b>",
+    `${params.tokenXSymbol}: ${params.receivedX}`,
+    `${params.tokenYSymbol}: ${params.receivedY}`,
+    "",
+    "<b>🎁 Claimed Fees</b>",
+    `${params.tokenXSymbol}: ${params.claimedFeeX}`,
+    `${params.tokenYSymbol}: ${params.claimedFeeY}`,
+  ];
+  if (params.pnl) {
+    const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
+    const prefix = params.pnl.pnlSol >= 0 ? "+" : "";
+    lines.push(
+      "",
+      "<b>📊 PNL</b>",
+      `${sign} ${params.pnl.pnlPercent.toFixed(2)}% (${prefix}${params.pnl.pnlSol.toFixed(4)} SOL)`,
+      `Fees earned: ${params.pnl.totalFeeEarnedSol.toFixed(4)} SOL`,
+    );
+  }
+  if (params.swapResult && !params.dryRun) {
+    if (params.swapResult.success) {
+      lines.push(
+        "",
+        "<b>🔄 Auto-Swap</b>",
+        `✅ Swapped ${params.swapResult.inputAmount} ${params.swapResult.inputSymbol} → ${params.swapResult.outputAmount} SOL`,
+      );
+    } else {
+      lines.push(
+        "",
+        "<b>🔄 Auto-Swap</b>",
+        `⚠️ Swap skipped: ${params.swapResult.reason}`,
+      );
+    }
+  }
+  if (!params.dryRun) {
+    lines.push(
+      "",
+      `<a href="https://solscan.io/account/${params.positionAddress}">🔗 View on Solscan</a>`,
+    );
+  }
+  await sendMessage(lines.join("\n"));
+}
+
+export async function notifyExitFailed(params: {
+  positionAddress: string;
+  error: string;
+}): Promise<void> {
+  if (!enabled) return;
+  const msg = [
+    "<b>❌ EXIT FAILED</b>",
+    "",
+    `<b>Position:</b> <code>${params.positionAddress}</code>`,
+    `<b>Error:</b> ${params.error.slice(0, 500)}`,
+  ].join("\n");
+  await sendMessage(msg);
 }
