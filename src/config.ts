@@ -64,4 +64,5 @@ export const CONFIG = {
   commitment: parseCommitment("COMMITMENT", "confirmed"),
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID || "",
+  gmgnApiKey: process.env.GMGN_API_KEY || "",
 } as const;

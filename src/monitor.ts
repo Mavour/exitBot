@@ -137,18 +137,11 @@ export async function startMonitor(): Promise<void> {
       if (tracked.state === "MONITORING") {
         if (inFlightSet.has(posKey)) continue;
 
-        if (!pos.dexScreenerPairAddress) {
-          log("WARN", "No DexScreener pair address, skipping", {
-            positionAddress: posKey,
-          });
-          continue;
-        }
-
         inFlightSet.add(posKey);
 
         try {
           const candles = await getCandles15m(
-            pos.poolAddress.toBase58(),
+            pos.tokenMint,
             REQUIRED_CANDLES
           );
 

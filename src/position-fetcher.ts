@@ -11,7 +11,7 @@ export interface ActivePosition {
   dlmmPool: DLMM;
   baseTokenMint: string;
   quoteTokenMint: string;
-  dexScreenerPairAddress: string;
+  tokenMint: string;
   totalXAmount: string;
   totalYAmount: string;
   unclaimedFeesX: string;
@@ -120,8 +120,7 @@ export async function fetchAllActivePositions(
         dlmmPool,
         baseTokenMint: pool.tokenXMint,
         quoteTokenMint: pool.tokenYMint,
-        // For Meteora DLMM, DexScreener pair address == pool address
-        dexScreenerPairAddress: pool.poolAddress,
+        tokenMint: pool.tokenXMint,
         totalXAmount: posInfo.totalXAmount,
         totalYAmount: posInfo.totalYAmount,
         unclaimedFeesX: posInfo.feeX.toString(),
