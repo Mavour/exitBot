@@ -354,7 +354,6 @@ export async function handleStartCommand(chatId: number): Promise<void> {
   await sendTelegramMessage("🔄 Restarting bot...", String(chatId));
   await new Promise((r) => setTimeout(r, 1500));
   try { fs.unlinkSync("/tmp/dlmm-exit-agent-menu.lock"); } catch {}
-  try { fs.unlinkSync("/tmp/dlmm-exit-agent-offset.txt"); } catch {}
   try {
     execSync("pm2 restart dlmm-exit-agent", { stdio: "ignore" });
   } catch {
@@ -451,7 +450,6 @@ async function restartBot(chatId: number): Promise<void> {
   await new Promise((r) => setTimeout(r, 1500));
 
   try { fs.unlinkSync("/tmp/dlmm-exit-agent-menu.lock"); } catch {}
-  try { fs.unlinkSync("/tmp/dlmm-exit-agent-offset.txt"); } catch {}
   try {
     execSync("pm2 restart dlmm-exit-agent", { stdio: "ignore" });
   } catch {
