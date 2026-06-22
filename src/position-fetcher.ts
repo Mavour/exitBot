@@ -20,18 +20,30 @@ export interface ActivePosition {
   binRange: { fromBinId: number; toBinId: number };
 }
 
-interface MeteoraPositionResponse {
-  positions: Array<{
-    position: {
-      address: string;
-    };
-    pool: {
-      address: string;
-      pair_type: string;
-      token_x_mint: string;
-      token_y_mint: string;
-    };
-  }>;
+interface ApiOpenPosition {
+  position_address: string;
+  lower_bin_id: number;
+  upper_bin_id: number;
+}
+
+interface ApiTokenInfo {
+  address: string;
+  symbol: string;
+  name: string;
+  decimals: number;
+}
+
+interface ApiPositionsByPool {
+  pool_address: string;
+  token_x: ApiTokenInfo;
+  token_y: ApiTokenInfo;
+  positions: ApiOpenPosition[];
+}
+
+interface ApiOpenPositionsResponse {
+  total_positions: number;
+  total_pools: number;
+  data: ApiPositionsByPool[];
 }
 
 export async function fetchAllActivePositions(
@@ -39,9 +51,9 @@ export async function fetchAllActivePositions(
   connection: Connection
 ): Promise<ActivePosition[]> {
   const walletAddress = wallet.toBase58();
-  const url = `https://dlmm-api.meteora.ag/position/${walletAddress}`;
+  const url = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${walletAddress}`;
 
-  log("INFO", "Fetching positions from Meteora API", { url });
+  log("INFO", "Fetching positions from Meteora Data API", { url });
 
   let response: Response;
   try {
@@ -49,35 +61,35 @@ export async function fetchAllActivePositions(
       signal: AbortSignal.timeout(15000),
     });
   } catch (err) {
-    logError("Failed to fetch positions from Meteora API", err);
+    logError("Failed to fetch positions from Meteora Data API", err);
     return [];
   }
 
   if (!response.ok) {
-    log("ERROR", `Meteora API returned ${response.status}`);
+    log("ERROR", `Meteora Data API returned ${response.status}`);
     return [];
   }
 
-  let data: MeteoraPositionResponse;
+  let data: ApiOpenPositionsResponse;
   try {
-    data = (await response.json()) as MeteoraPositionResponse;
+    data = (await response.json()) as ApiOpenPositionsResponse;
   } catch (err) {
-    logError("Failed to parse Meteora API response", err);
+    logError("Failed to parse Meteora Data API response", err);
     return [];
   }
 
-  if (!data.positions || data.positions.length === 0) {
-    log("INFO", "No positions found in wallet");
+  if (!data.data || data.data.length === 0) {
+    log("INFO", "No open positions found in wallet");
     return [];
   }
 
-  log("INFO", `Found ${data.positions.length} positions via API`);
+  log("INFO", `Found ${data.total_positions} positions across ${data.total_pools} pools`);
 
   const positions: ActivePosition[] = [];
   const poolCache = new Map<string, DLMM>();
 
-  for (const p of data.positions) {
-    const poolAddrStr = p.pool.address;
+  for (const pool of data.data) {
+    const poolAddrStr = pool.pool_address;
     const poolPubkey = new PublicKey(poolAddrStr);
 
     let dlmmPool: DLMM;
@@ -95,56 +107,55 @@ export async function fetchAllActivePositions(
       }
     }
 
-    const positionPubkey = new PublicKey(p.position.address);
-
+    // Fetch on-chain positions for this user+pool
     let positionsByUser;
     try {
-      positionsByUser = await dlmmPool.getPositionsByUserAndLbPair(
-        wallet
-      );
+      positionsByUser = await dlmmPool.getPositionsByUserAndLbPair(wallet);
     } catch (err) {
-      logError(
-        `Failed to fetch position data for ${p.position.address}`,
-        err
+      logError(`Failed to fetch positions for pool ${poolAddrStr}`, err);
+      continue;
+    }
+
+    for (const apiPos of pool.positions) {
+      const posPubkey = new PublicKey(apiPos.position_address);
+      const posKey = apiPos.position_address;
+
+      const posData = positionsByUser.userPositions.find(
+        (up) => up.publicKey.toBase58() === posKey
       );
-      continue;
+
+      if (!posData) {
+        log("WARN", `Position ${posKey} not found on-chain, skipping`);
+        continue;
+      }
+
+      const posInfo = posData.positionData;
+
+      if (posInfo.totalXAmount === "0" && posInfo.totalYAmount === "0") {
+        log("INFO", `Skipping empty position ${posKey}`);
+        continue;
+      }
+
+      const baseTokenMint = pool.token_x.address;
+      const quoteTokenMint = pool.token_y.address;
+
+      positions.push({
+        poolAddress: poolPubkey,
+        positionPubkey: posPubkey,
+        dlmmPool,
+        baseTokenMint,
+        quoteTokenMint,
+        dexScreenerPairAddress: "",
+        totalXAmount: posInfo.totalXAmount,
+        totalYAmount: posInfo.totalYAmount,
+        unclaimedFeesX: posInfo.feeX.toString(),
+        unclaimedFeesY: posInfo.feeY.toString(),
+        binRange: {
+          fromBinId: apiPos.lower_bin_id,
+          toBinId: apiPos.upper_bin_id,
+        },
+      });
     }
-
-    const posData = positionsByUser.userPositions.find(
-      (up) => up.publicKey.toBase58() === p.position.address
-    );
-
-    if (!posData) {
-      log("WARN", `Position ${p.position.address} not found on-chain, skipping`);
-      continue;
-    }
-
-    const posInfo = posData.positionData;
-
-    // Skip positions with zero liquidity
-    if (posInfo.totalXAmount === "0" && posInfo.totalYAmount === "0") {
-      log("INFO", `Skipping empty position ${p.position.address}`);
-      continue;
-    }
-
-    const activePosition: ActivePosition = {
-      poolAddress: poolPubkey,
-      positionPubkey,
-      dlmmPool,
-      baseTokenMint: p.pool.token_x_mint,
-      quoteTokenMint: p.pool.token_y_mint,
-      dexScreenerPairAddress: "",
-      totalXAmount: posInfo.totalXAmount,
-      totalYAmount: posInfo.totalYAmount,
-      unclaimedFeesX: posInfo.feeX.toString(),
-      unclaimedFeesY: posInfo.feeY.toString(),
-      binRange: {
-        fromBinId: posInfo.lowerBinId,
-        toBinId: posInfo.upperBinId,
-      },
-    };
-
-    positions.push(activePosition);
   }
 
   log("INFO", `Loaded ${positions.length} active positions`);
