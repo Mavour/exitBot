@@ -340,9 +340,9 @@ async function startCommandListener(): Promise<void> {
       const updates = await getUpdates(offset);
       for (const update of updates) {
         offset = update.update_id + 1;
+        fs.writeFileSync(OFFSET_FILE, String(offset));
         await handleUpdate(update);
       }
-      fs.writeFileSync(OFFSET_FILE, String(offset));
     } catch (err) {
       logError("Telegram update poll failed", err);
     }
