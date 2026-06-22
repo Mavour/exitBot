@@ -2,7 +2,7 @@ import {
   Connection,
   PublicKey,
 } from "@solana/web3.js";
-import DLMM, { getPriceOfBinByBinId } from "@meteora-ag/dlmm";
+import DLMM from "@meteora-ag/dlmm";
 import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
 
@@ -183,11 +183,11 @@ export async function fetchAllActivePositions(
       const isOutOfRange = pool.outOfRange === true ||
         (Array.isArray(pool.positionsOutOfRange) && pool.positionsOutOfRange.includes(posAddrStr));
 
-      // Determine OOR direction using midpoint of bin price range
-      const binStep = dlmmPool.lbPair.parameters.binStep;
-      const fromBinPrice = Number(getPriceOfBinByBinId(posInfo.lowerBinId, binStep));
-      const toBinPrice = Number(getPriceOfBinByBinId(posInfo.upperBinId, binStep));
-      const midPrice = (fromBinPrice + toBinPrice) / 2;
+      // Determine OOR direction using bin price data from SDK position data
+      const posAny = posData as any;
+      const lowerBinPrice = Number(posAny.lowerBinArray?.bins?.[0]?.price ?? 0);
+      const upperBinPrice = Number(posAny.upperBinArray?.bins?.slice(-1)?.[0]?.price ?? 0);
+      const midPrice = (lowerBinPrice + upperBinPrice) / 2;
 
       let isOORRight = false;
       let isOORLeft = false;
