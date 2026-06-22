@@ -480,6 +480,69 @@ export async function handlePositionsCommand(chatId: number): Promise<void> {
 
 export { pendingInput, isAuthorized };
 
+async function getUpdates(offset: number): Promise<any[]> {
+  const url = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/getUpdates?offset=${offset}&timeout=10`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  if (!res.ok) {
+    throw new Error(`Telegram getUpdates HTTP ${res.status}`);
+  }
+  const json = (await res.json()) as any;
+  return json.result ?? [];
+}
+
+async function handleUpdate(update: any): Promise<void> {
+  const chatId =
+    update.message?.chat?.id ?? update.callback_query?.message?.chat?.id;
+  if (!chatId || !isAuthorized(chatId)) return;
+
+  if (update.callback_query) {
+    await handleCallbackQuery(
+      chatId,
+      update.callback_query.data,
+      update.callback_query.id
+    );
+    return;
+  }
+
+  const text = (update.message?.text ?? "").trim();
+  if (!text) return;
+
+  if (pendingInput.has(chatId)) {
+    await handleTextInput(chatId, text);
+    return;
+  }
+
+  if (text === "/menu") {
+    await handleMenuCommand(chatId);
+  } else if (text === "/status") {
+    await handleStatusCommand(chatId);
+  } else if (text === "/positions") {
+    await handlePositionsCommand(chatId);
+  } else if (text === "/stop") {
+    await handleStopCommand(chatId);
+  } else if (text === "/start") {
+    await handleStartCommand(chatId);
+  } else if (text === "/cancel") {
+    await handleCancelCommand(chatId);
+  }
+}
+
+export async function startCommandListener(): Promise<void> {
+  let offset = 0;
+  while (true) {
+    try {
+      const updates = await getUpdates(offset);
+      for (const update of updates) {
+        offset = update.update_id + 1;
+        await handleUpdate(update);
+      }
+    } catch (err) {
+      logError("Telegram update poll failed", err);
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+}
+
 function updateEnvFile(envKey: string, newValue: string): void {
   const envPath = path.join(process.cwd(), ".env");
   let content = "";
