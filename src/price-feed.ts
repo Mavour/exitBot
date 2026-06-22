@@ -33,6 +33,18 @@ interface MeteoraOHLCVResponse {
   data: MeteoraOHLCVEntry[];
 }
 
+interface DexScreenerSearchEntry {
+  chainId: string;
+  dexId: string;
+  pairAddress: string;
+}
+
+interface DexScreenerSearchResponse {
+  pairs: DexScreenerSearchEntry[];
+}
+
+const dexPairCache = new Map<string, string>();
+
 async function fetchWithRetry(
   url: string,
   retries = 3
@@ -88,6 +100,34 @@ async function fetchWithRetry(
   throw lastErr || new Error(`Failed after ${retries} retries: ${url}`);
 }
 
+async function resolveDexScreenerPairAddress(
+  poolAddress: string
+): Promise<string> {
+  const cached = dexPairCache.get(poolAddress);
+  if (cached) return cached;
+
+  const url = `https://api.dexscreener.com/latest/dex/search?q=${poolAddress}`;
+  const response = await fetchWithRetry(url);
+  const data = (await response.json()) as DexScreenerSearchResponse;
+
+  if (!data.pairs || data.pairs.length === 0) {
+    throw new Error(`No DexScreener pairs found for pool ${poolAddress}`);
+  }
+
+  const match = data.pairs.find(
+    (p) => p.chainId === "solana" && p.dexId === "meteora"
+  );
+
+  if (!match) {
+    throw new Error(
+      `No Meteora Solana pair found in DexScreener search for ${poolAddress}`
+    );
+  }
+
+  dexPairCache.set(poolAddress, match.pairAddress);
+  return match.pairAddress;
+}
+
 async function fetchDexScreenerCandles(
   pairAddress: string,
   limit: number
@@ -124,29 +164,29 @@ async function fetchMeteoraCandles(
   poolAddress: string,
   limit: number
 ): Promise<Candle[]> {
-  // Meteora only has 5m OHLCV, so fetch 3x more and aggregate to 15m
-  const fiveMinLimit = limit * 3 + 5; // extra buffer
-  const url = `https://dlmm.datapi.meteora.ag/pools/${poolAddress}/ohlcv?timeframe=5m&limit=${fiveMinLimit}`;
+  // Meteora 1m OHLCV → aggregate every 15 into one 15m candle
+  const oneMinLimit = 900;
+  const url = `https://dlmm.datapi.meteora.ag/pools/${poolAddress}/ohlcv?timeframe=1m&limit=${oneMinLimit}`;
 
   log("INFO", "Falling back to Meteora OHLCV API", { url });
 
   const response = await fetchWithRetry(url);
   const data = (await response.json()) as MeteoraOHLCVResponse;
 
-  if (!data.data || data.data.length < 3) {
+  if (!data.data || data.data.length < 15) {
     throw new Error(
-      `Meteora OHLCV returned ${data.data?.length ?? 0} 5m candles`
+      `Meteora OHLCV returned ${data.data?.length ?? 0} 1m candles, need at least 15`
     );
   }
 
-  const fiveMinCandles = data.data.sort(
+  const oneMinCandles = data.data.sort(
     (a, b) => a.timestamp - b.timestamp
   );
 
-  // Aggregate 5m → 15m candles (group every 3)
+  // Aggregate 1m → 15m candles (group every 15)
   const candles15m: Candle[] = [];
-  for (let i = 0; i + 2 < fiveMinCandles.length; i += 3) {
-    const group = fiveMinCandles.slice(i, i + 3);
+  for (let i = 0; i + 14 < oneMinCandles.length; i += 15) {
+    const group = oneMinCandles.slice(i, i + 15);
     candles15m.push({
       timestamp: group[0].timestamp,
       open: group[0].open,
@@ -164,17 +204,46 @@ export async function getCandles15m(
   poolAddress: string,
   limit: number
 ): Promise<Candle[]> {
-  // Try DexScreener first (pair address == pool address for Meteora DLMM)
+  // Resolve DexScreener pair address from Meteora pool address
+  let dexPairAddress: string;
   try {
-    return await fetchDexScreenerCandles(poolAddress, limit);
+    dexPairAddress = await resolveDexScreenerPairAddress(poolAddress);
+  } catch (err) {
+    log("WARN", "DexScreener pair lookup failed, trying Meteora OHLCV", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    const fallback = await fetchMeteoraCandles(poolAddress, limit);
+    if (fallback.length < 60) {
+      throw new Error(
+        `Insufficient candles: got ${fallback.length}, need at least 60`
+      );
+    }
+    return fallback;
+  }
+
+  // Try DexScreener chart with resolved pair address
+  try {
+    const candles = await fetchDexScreenerCandles(dexPairAddress, limit);
+    if (candles.length < 60) {
+      throw new Error(
+        `Insufficient candles from DexScreener: got ${candles.length}, need at least 60`
+      );
+    }
+    return candles;
   } catch (err) {
     log("WARN", "DexScreener chart failed, trying Meteora OHLCV", {
       error: err instanceof Error ? err.message : String(err),
     });
   }
 
-  // Fallback: Meteora OHLCV (5m → aggregate to 15m)
-  return await fetchMeteoraCandles(poolAddress, limit);
+  // Fallback: Meteora OHLCV (1m → aggregate to 15m)
+  const fallback = await fetchMeteoraCandles(poolAddress, limit);
+  if (fallback.length < 60) {
+    throw new Error(
+      `Insufficient candles: got ${fallback.length}, need at least 60`
+    );
+  }
+  return fallback;
 }
 
 
