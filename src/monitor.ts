@@ -86,58 +86,55 @@ export async function startMonitor(): Promise<void> {
       inFlight: inFlightSet.size,
     });
 
-    // Re-fetch position list every 10 cycles
-    if (pollCycle % 10 === 0) {
-      log("INFO", "Re-fetching position list");
-      const freshPositions = await fetchAllActivePositions(
-        wallet.publicKey,
-        connection
-      );
+    log("INFO", "Re-fetching position list");
+    const freshPositions = await fetchAllActivePositions(
+      wallet.publicKey,
+      connection
+    );
 
-      for (const pos of freshPositions) {
-        if (
-          !trackedPositions.some(
-            (t) =>
-              t.position.positionPubkey.toBase58() ===
-              pos.positionPubkey.toBase58()
-          )
-        ) {
-          try {
-            const pairAddr = await getDexScreenerPairFromMints(
-              pos.baseTokenMint
-            );
-            pos.dexScreenerPairAddress = pairAddr;
-          } catch (err) {
-            logError(
-              `Failed to resolve DexScreener pair for ${pos.baseTokenMint}`,
-              err
-            );
-          }
-          trackedPositions.push({
-            position: pos,
-            state: "MONITORING",
-          });
-          log("INFO", "New position detected", {
-            positionAddress: pos.positionPubkey.toBase58(),
-          });
+    for (const pos of freshPositions) {
+      if (
+        !trackedPositions.some(
+          (t) =>
+            t.position.positionPubkey.toBase58() ===
+            pos.positionPubkey.toBase58()
+        )
+      ) {
+        try {
+          const pairAddr = await getDexScreenerPairFromMints(
+            pos.baseTokenMint
+          );
+          pos.dexScreenerPairAddress = pairAddr;
+        } catch (err) {
+          logError(
+            `Failed to resolve DexScreener pair for ${pos.baseTokenMint}`,
+            err
+          );
         }
+        trackedPositions.push({
+          position: pos,
+          state: "MONITORING",
+        });
+        log("INFO", "New position detected", {
+          positionAddress: pos.positionPubkey.toBase58(),
+        });
       }
-
-      const freshKeys = new Set(
-        freshPositions.map((p) => p.positionPubkey.toBase58())
-      );
-      trackedPositions = trackedPositions.filter((t) => {
-        if (t.state === "EXITED") return false;
-        const key = t.position.positionPubkey.toBase58();
-        if (!freshKeys.has(key) && t.state === "MONITORING") {
-          log("INFO", "Position no longer active, removing", {
-            positionAddress: key,
-          });
-          return false;
-        }
-        return true;
-      });
     }
+
+    const freshKeys = new Set(
+      freshPositions.map((p) => p.positionPubkey.toBase58())
+    );
+    trackedPositions = trackedPositions.filter((t) => {
+      if (t.state === "EXITED") return false;
+      const key = t.position.positionPubkey.toBase58();
+      if (!freshKeys.has(key) && t.state === "MONITORING") {
+        log("INFO", "Position no longer active, removing", {
+          positionAddress: key,
+        });
+        return false;
+      }
+      return true;
+    });
 
     // Process each position
     for (const tracked of trackedPositions) {
