@@ -137,6 +137,30 @@ export async function startMonitor(): Promise<void> {
       if (tracked.state === "MONITORING") {
         if (inFlightSet.has(posKey)) continue;
 
+        // Re-fetch active bin — price moves every cycle
+        try {
+          const freshBin = await pos.dlmmPool.getActiveBin();
+          pos.activeBinId = freshBin.binId;
+          pos.isOORRight = freshBin.binId > pos.binRange.toBinId;
+        } catch (err) {
+          logError(
+            `Failed to refresh active bin for ${posKey}`,
+            err
+          );
+          continue;
+        }
+
+        // Out-of-range right → exit immediately, skip indicator check
+        if (pos.isOORRight) {
+          log("WARN", "Position is OUT-OF-RANGE RIGHT", {
+            positionAddress: posKey,
+            activeBinId: pos.activeBinId,
+            toBinId: pos.binRange.toBinId,
+          });
+          tracked.state = "EXIT_TRIGGERED";
+          continue;
+        }
+
         inFlightSet.add(posKey);
 
         try {

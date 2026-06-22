@@ -12,6 +12,8 @@ export interface ActivePosition {
   baseTokenMint: string;
   quoteTokenMint: string;
   tokenMint: string;
+  activeBinId: number;
+  isOORRight: boolean;
   totalXAmount: string;
   totalYAmount: string;
   unclaimedFeesX: string;
@@ -95,6 +97,14 @@ export async function fetchAllActivePositions(
       continue;
     }
 
+    let activeBin: { binId: number } | undefined;
+    try {
+      activeBin = await dlmmPool.getActiveBin();
+    } catch (err) {
+      logError(`Failed to get active bin for pool ${pool.poolAddress}`, err);
+      continue;
+    }
+
     for (const posAddrStr of pool.listPositions) {
       const posPubkey = new PublicKey(posAddrStr);
 
@@ -114,6 +124,8 @@ export async function fetchAllActivePositions(
         continue;
       }
 
+      const toBinId = posInfo.upperBinId;
+
       positions.push({
         poolAddress: poolPubkey,
         positionPubkey: posPubkey,
@@ -121,6 +133,8 @@ export async function fetchAllActivePositions(
         baseTokenMint: pool.tokenXMint,
         quoteTokenMint: pool.tokenYMint,
         tokenMint: pool.tokenXMint,
+        activeBinId: activeBin.binId,
+        isOORRight: activeBin.binId > toBinId,
         totalXAmount: posInfo.totalXAmount,
         totalYAmount: posInfo.totalYAmount,
         unclaimedFeesX: posInfo.feeX.toString(),
