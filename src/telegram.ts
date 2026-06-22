@@ -60,8 +60,9 @@ export async function notifyAgentStart(params: {
 export async function notifyOORRight(params: {
   positionAddress: string;
   poolAddress: string;
-  activeBinId: number;
-  toBinId: number;
+  rsi: number;
+  bbUpper: number;
+  price: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -69,8 +70,10 @@ export async function notifyOORRight(params: {
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
     `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>Active Bin:</b> ${params.activeBinId} &gt; Max Bin: ${params.toBinId}`,
-    "Status: Earning zero fees — exiting now",
+    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
+    `<b>BB Upper:</b> ${params.bbUpper}`,
+    `<b>Price:</b> ${params.price}`,
+    "Status: 100% TOKEN — monitoring for exit signal",
   ].join("\n");
   await sendMessage(msg);
 }
@@ -78,8 +81,9 @@ export async function notifyOORRight(params: {
 export async function notifyOORLeft(params: {
   positionAddress: string;
   poolAddress: string;
-  activeBinId: number;
-  fromBinId: number;
+  rsi: number;
+  bbUpper: number;
+  price: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -87,8 +91,10 @@ export async function notifyOORLeft(params: {
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
     `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>Active Bin:</b> ${params.activeBinId} &lt; Min Bin: ${params.fromBinId}`,
-    "Status: Holding 100% SOL — monitoring for re-entry",
+    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
+    `<b>BB Upper:</b> ${params.bbUpper}`,
+    `<b>Price:</b> ${params.price}`,
+    "Status: 100% SOL — monitoring for exit signal",
   ].join("\n");
   await sendMessage(msg);
 }
@@ -99,7 +105,7 @@ export async function notifyExitTriggered(params: {
   rsi: number;
   price: number;
   bbUpper: number;
-  trigger: "RSI_BB" | "OOR_RIGHT";
+  trigger: "RSI_BB";
   pnl: PNLData | null;
 }): Promise<void> {
   if (!enabled) return;
@@ -108,15 +114,11 @@ export async function notifyExitTriggered(params: {
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
     `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>Trigger:</b> ${params.trigger === "OOR_RIGHT" ? "⚠️ Out of Range Right" : "📊 RSI+BB Signal"}`,
+    `<b>Trigger:</b> 📊 RSI+BB Signal`,
+    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
+    `<b>Price:</b> ${params.price}`,
+    `<b>BB Upper:</b> ${params.bbUpper}`,
   ];
-  if (params.trigger === "RSI_BB") {
-    lines.push(
-      `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
-      `<b>Price:</b> ${params.price}`,
-      `<b>BB Upper:</b> ${params.bbUpper}`,
-    );
-  }
   if (params.pnl) {
     const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
     const prefix = params.pnl.pnlSol >= 0 ? "+" : "";

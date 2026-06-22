@@ -33,6 +33,7 @@ interface TrackedPosition {
 
 let isShuttingDown = false;
 const inFlightSet = new Set<string>();
+const oorRightLastNotified = new Map<string, number>();
 const oorLeftLastNotified = new Map<string, number>();
 
 async function handleShutdown(): Promise<void> {
@@ -162,54 +163,56 @@ export async function startMonitor(): Promise<void> {
 
           const currentPrice = candles[candles.length - 1].close;
 
-          // OOR flags are set by position-fetcher from API fields
-          // Out-of-range right → exit immediately, skip indicator check
+          const snapshot = checkExitConditions(candles);
+
+          log("INFO", `Position ${posKey.slice(0, 8)}...`, {
+            rsi: snapshot.rsi.toFixed(2),
+            bbUpper: snapshot.bb.upper.toFixed(8),
+            bbMiddle: snapshot.bb.middle.toFixed(8),
+            bbLower: snapshot.bb.lower.toFixed(8),
+            price: snapshot.price.toFixed(8),
+            shouldExit: snapshot.shouldExit,
+            isOORRight: pos.isOORRight,
+            isOORLeft: pos.isOORLeft,
+          });
+
+          const hourMs = 60 * 60 * 1000;
+
           if (pos.isOORRight) {
             log("WARN", "Position is OUT-OF-RANGE RIGHT", {
               positionAddress: posKey,
               price: currentPrice,
             });
-            notifyOORRight({
-              positionAddress: posKey,
-              poolAddress: pos.poolAddress.toBase58(),
-              activeBinId: 0,
-              toBinId: 0,
-            });
-            notifyExitTriggered({
-              positionAddress: posKey,
-              poolAddress: pos.poolAddress.toBase58(),
-              rsi: 0,
-              price: currentPrice,
-              bbUpper: 0,
-              trigger: "OOR_RIGHT",
-              pnl: pos.pnl,
-            });
-            tracked.state = "EXIT_TRIGGERED";
-            continue;
+            const lastNotified = oorRightLastNotified.get(posKey) ?? 0;
+            if (Date.now() - lastNotified > hourMs) {
+              notifyOORRight({
+                positionAddress: posKey,
+                poolAddress: pos.poolAddress.toBase58(),
+                rsi: snapshot.rsi,
+                bbUpper: snapshot.bb.upper,
+                price: currentPrice,
+              });
+              oorRightLastNotified.set(posKey, Date.now());
+            }
           }
 
-          // Out-of-range left → notify (throttled), skip RSI/BB, do NOT exit
           if (pos.isOORLeft) {
             log("WARN", "Position is OUT-OF-RANGE LEFT", {
               positionAddress: posKey,
               price: currentPrice,
             });
-            const hourMs = 60 * 60 * 1000;
             const lastNotified = oorLeftLastNotified.get(posKey) ?? 0;
             if (Date.now() - lastNotified > hourMs) {
               notifyOORLeft({
                 positionAddress: posKey,
                 poolAddress: pos.poolAddress.toBase58(),
-                activeBinId: 0,
-                fromBinId: 0,
+                rsi: snapshot.rsi,
+                bbUpper: snapshot.bb.upper,
+                price: currentPrice,
               });
               oorLeftLastNotified.set(posKey, Date.now());
             }
-            continue;
           }
-
-          // Only check RSI/BB when position is in range
-          const snapshot = checkExitConditions(candles);
 
           // If RSI is 0, indicators couldn't be computed (not enough data)
           if (snapshot.rsi === 0 && snapshot.bb.upper === 0) {
@@ -219,15 +222,6 @@ export async function startMonitor(): Promise<void> {
             });
             continue;
           }
-
-          log("INFO", `Position ${posKey.slice(0, 8)}...`, {
-            rsi: snapshot.rsi.toFixed(2),
-            bbUpper: snapshot.bb.upper.toFixed(8),
-            bbMiddle: snapshot.bb.middle.toFixed(8),
-            bbLower: snapshot.bb.lower.toFixed(8),
-            price: snapshot.price.toFixed(8),
-            shouldExit: snapshot.shouldExit,
-          });
 
           if (snapshot.shouldExit) {
             log("EXIT", "EXIT CONDITIONS MET", {
