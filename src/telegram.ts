@@ -120,10 +120,10 @@ export async function notifyExitTriggered(params: {
     `<b>BB Upper:</b> ${params.bbUpper}`,
   ];
   if (params.pnl) {
-    const sign = params.pnl.pnlSol >= 0 ? "🟢" : "🔴";
+    const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
     const prefix = params.pnl.pnlSol >= 0 ? "+" : "";
     lines.push(
-      `<b>PNL:</b> ${sign} ${prefix}${params.pnl.pnlSol.toFixed(4)} SOL`,
+      `<b>PNL:</b> ${sign} ${params.pnl.pnlPercent.toFixed(2)}% (${prefix}${params.pnl.pnlSol.toFixed(4)} SOL)`,
     );
   }
   await sendMessage(lines.join("\n"));
@@ -152,12 +152,12 @@ export async function notifyExitSuccess(params: {
     `${params.tokenYSymbol}: ${params.receivedY}`,
   ];
   if (params.pnl) {
-    const sign = params.pnl.pnlSol >= 0 ? "🟢" : "🔴";
+    const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
     const prefix = params.pnl.pnlSol >= 0 ? "+" : "";
     lines.push(
       "",
       "<b>📊 PNL</b>",
-      `${sign} ${prefix}${params.pnl.pnlSol.toFixed(4)} SOL`,
+      `${sign} ${params.pnl.pnlPercent.toFixed(2)}% (${prefix}${params.pnl.pnlSol.toFixed(4)} SOL)`,
       `Fees earned: ${params.pnl.totalFeeEarnedSol.toFixed(4)} SOL`,
     );
   }
