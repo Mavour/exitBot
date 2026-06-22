@@ -35,6 +35,7 @@ let isShuttingDown = false;
 const inFlightSet = new Set<string>();
 const oorRightLastNotified = new Map<string, number>();
 const oorLeftLastNotified = new Map<string, number>();
+const wasOOR = new Set<string>();
 
 async function handleShutdown(): Promise<void> {
   if (isShuttingDown) return;
@@ -213,6 +214,14 @@ export async function startMonitor(): Promise<void> {
               oorLeftLastNotified.set(posKey, Date.now());
             }
           }
+
+          const isOORNow = pos.isOORRight || pos.isOORLeft;
+          if (wasOOR.has(posKey) && !isOORNow) {
+            oorRightLastNotified.delete(posKey);
+            oorLeftLastNotified.delete(posKey);
+            wasOOR.delete(posKey);
+          }
+          if (isOORNow) wasOOR.add(posKey);
 
           // If RSI is 0, indicators couldn't be computed (not enough data)
           if (snapshot.rsi === 0 && snapshot.bb.upper === 0) {
