@@ -62,4 +62,6 @@ export const CONFIG = {
   ),
   slippageBps: parseNumber("SLIPPAGE_BPS", 100, 0),
   commitment: parseCommitment("COMMITMENT", "confirmed"),
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN || "",
+  telegramChatId: process.env.TELEGRAM_CHAT_ID || "",
 } as const;

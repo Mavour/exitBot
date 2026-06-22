@@ -10,6 +10,13 @@ import {
 import { checkExitConditions } from "./indicators";
 import { executeFullExit, ExitResult } from "./exit-executor";
 import { log, logError } from "./logger";
+import {
+  initTelegram,
+  notifyAgentStart,
+  notifyExitTriggered,
+  notifyExitSuccess,
+  notifyExitFailed,
+} from "./telegram";
 
 const REQUIRED_CANDLES = 60;
 
@@ -53,6 +60,14 @@ export async function startMonitor(): Promise<void> {
     position: p,
     state: "MONITORING" as PositionState,
   }));
+
+  initTelegram();
+  notifyAgentStart(
+    trackedPositions.length,
+    CONFIG.dryRun,
+    CONFIG.rsiThreshold,
+    CONFIG.pollIntervalMs
+  );
 
   log("INFO", "Monitor started", {
     positionsCount: trackedPositions.length,
@@ -165,6 +180,13 @@ export async function startMonitor(): Promise<void> {
               bbUpper: snapshot.bb.upper.toFixed(8),
               poolAddress: pos.poolAddress.toBase58(),
             });
+            notifyExitTriggered(
+              posKey,
+              pos.poolAddress.toBase58(),
+              snapshot.smoothedRsi,
+              snapshot.price,
+              snapshot.bb.upper
+            );
             tracked.state = "EXIT_TRIGGERED";
           }
         } catch (err) {
@@ -202,12 +224,22 @@ export async function startMonitor(): Promise<void> {
               receivedY: result.receivedY,
               txCount: result.txSignatures.length,
             });
+            notifyExitSuccess(
+              posKey,
+              result.claimedFeeX,
+              result.claimedFeeY,
+              result.receivedX,
+              result.receivedY,
+              result.txSignatures.length,
+              result.dryRun
+            );
           } else {
             tracked.state = "MONITORING";
             log("WARN", "Exit failed, reverting to MONITORING", {
               positionAddress: posKey,
               error: result.error,
             });
+            notifyExitFailed(posKey, result.error ?? "Unknown error");
           }
         } catch (err) {
           tracked.state = "MONITORING";
