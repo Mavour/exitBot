@@ -15,7 +15,7 @@ export interface OHLCCandle {
 }
 
 const GMGN_BASE = "https://openapi.gmgn.ai";
-const MIN_CANDLES_REQUIRED = 60;
+const MIN_CANDLES_REQUIRED = 20;
 
 async function fetchGMGNKline(
   mint: string,
