@@ -245,6 +245,7 @@ export async function notifyExitSuccess(params: {
   dryRun: boolean;
   pnl: PNLData | null;
   swapResult: SwapResult | null;
+  swapError?: string;
 }): Promise<void> {
   if (!enabled) return;
   const label = params.dryRun ? "🔍 EXIT SIMULATED" : "✅ EXIT SUCCESS";
@@ -276,10 +277,13 @@ export async function notifyExitSuccess(params: {
         `✅ Swapped ${params.swapResult.inputAmount} ${params.swapResult.inputSymbol} → ${params.swapResult.outputAmount} SOL`,
       );
     } else {
+      const reason = params.swapResult.reason || params.swapError || "unknown";
       lines.push(
         "",
         "<b>🔄 Auto-Swap</b>",
-        `⚠️ Swap skipped: ${params.swapResult.reason}`,
+        `⚠️ Swap skipped: ${reason}`,
+        "Tokens remain in wallet. Sell manually via Jupiter UI:",
+        `<a href="https://jup.ag/swap/SOL-${params.tokenXSymbol !== "SOL" ? params.tokenXSymbol : params.tokenYSymbol}">Open Jupiter</a>`,
       );
     }
   }

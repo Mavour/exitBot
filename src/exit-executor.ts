@@ -24,6 +24,8 @@ export interface ExitResult {
   dryRun: boolean;
   error?: string;
   swapResult: SwapResult | null;
+  swapError?: string;
+  postCloseErrors: string[];
 }
 
 function buildPriorityFeeIx(): TransactionInstruction {
@@ -218,6 +220,7 @@ export async function executeFullExit(
     txSignatures: [],
     dryRun,
     swapResult: null,
+    postCloseErrors: [],
   };
 
   log("EXIT", `Starting exit for position ${posAddr}`, {
@@ -227,6 +230,36 @@ export async function executeFullExit(
   });
 
   try {
+    // Fix E: Pre-flight idempotency check — if position already closed on-chain, treat as success
+    if (!dryRun) {
+      try {
+        const accountInfo = await withRpcFallback(conn =>
+          conn.getAccountInfo(position.positionPubkey, CONFIG.commitment)
+        );
+        const owner = accountInfo?.owner?.toBase58();
+        const SYSTEM_OWNER = "11111111111111111111111111111111";
+        const isClosed = !accountInfo || owner === SYSTEM_OWNER;
+        if (isClosed) {
+          log("WARN", `Position ${posAddr} already closed on-chain, treating as success`, {
+            owner: owner ?? "missing",
+          });
+          result.success = true;
+          result.swapResult = {
+            success: true,
+            inputSymbol: "?",
+            inputAmount: "0",
+            outputAmount: "0",
+            reason: "Position already closed on-chain",
+          };
+          return result;
+        }
+      } catch (preflightErr) {
+        log("WARN", `Pre-flight check failed, proceeding with exit`, {
+          error: preflightErr instanceof Error ? preflightErr.message : String(preflightErr),
+        });
+      }
+    }
+
     // Step 1 — Remove liquidity (claims fees + removes liq + closes position)
     log("EXIT", "Step 1: Removing liquidity with claim and close", { dryRun });
 
@@ -253,6 +286,12 @@ export async function executeFullExit(
 
       const sigs = await sendClaimTxs(connection, removeTxs, wallet);
       result.txSignatures.push(...sigs);
+
+      // Fix C: 5-second settle wait — prevents "zero balance" race when fetching actual received
+      log("EXIT", `Liquidity removed (${sigs.length} tx), waiting 5s for chain to settle...`, {
+        signatures: sigs,
+      });
+      await new Promise((r) => setTimeout(r, 5000));
 
       const xMint = position.dlmmPool.tokenX.mint.address.toBase58();
       const yMint = position.dlmmPool.tokenY.mint.address.toBase58();
@@ -319,15 +358,25 @@ export async function executeFullExit(
       };
     }
 
-    const swapOk = !result.swapResult || result.swapResult.success;
-    result.success = result.success && swapOk;
-    if (!swapOk && result.swapResult?.reason) {
-      result.error = `Swap skipped/failed: ${result.swapResult.reason}`;
+    // Fix A: Decouple exit success from swap success.
+    // Exit succeeds if liquidity was removed (tx confirmed on-chain).
+    // Swap is a separate, optional cleanup step.
+    const liquidityRemoved = result.txSignatures.length > 0 || dryRun;
+    result.success = liquidityRemoved;
+    if (result.swapResult && !result.swapResult.success) {
+      result.swapError = result.swapResult.reason || "swap incomplete";
+      log("WARN", `Liquidity removed but swap incomplete`, {
+        positionAddress: posAddr,
+        swapReason: result.swapError,
+      });
     }
+
     log("EXIT", `Exit complete for position ${posAddr}`, {
       success: result.success,
+      liquidityRemoved,
       txCount: result.txSignatures.length,
-      swapResult: result.swapResult,
+      swapSuccess: result.swapResult?.success,
+      swapReason: result.swapError,
       dryRun,
     });
   } catch (err) {

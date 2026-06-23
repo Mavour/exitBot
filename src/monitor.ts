@@ -166,7 +166,7 @@ export async function startMonitor(): Promise<void> {
           if (t.state === "EXITED") return false;
           const key = t.position.positionPubkey.toBase58();
           if (!freshKeys.has(key) && t.state === "MONITORING") {
-            log("INFO", "Position no longer active, removing", {
+            log("WARN", "Position no longer active on-chain, removing from tracking", {
               positionAddress: key,
             });
             return false;
@@ -375,6 +375,8 @@ export async function startMonitor(): Promise<void> {
               receivedX: result.receivedX,
               receivedY: result.receivedY,
               txCount: result.txSignatures.length,
+              swapSuccess: result.swapResult?.success ?? null,
+              swapReason: result.swapError ?? null,
             });
             safeNotify(
               () =>
@@ -388,25 +390,34 @@ export async function startMonitor(): Promise<void> {
                   dryRun: result.dryRun,
                   pnl: pos.pnl,
                   swapResult: result.swapResult,
+                  swapError: result.swapError,
                 }),
               "exit success"
             );
 
+            // ALWAYS save exit record when liquidity was removed on-chain.
+            // Record even if swap failed/incomplete — the exit itself succeeded.
             if (pos.pnl) {
-              saveExitRecord({
-                timestamp: new Date().toISOString(),
-                positionAddress: posKey,
-                poolAddress: pos.poolAddress.toBase58(),
-                tokenXSymbol: pos.tokenXSymbol,
-                tokenYSymbol: pos.tokenYSymbol,
-                receivedX: result.receivedX,
-                receivedY: result.receivedY,
-                pnlPercent: pos.pnl.pnlPercent,
-                pnlSol: pos.pnl.pnlSol,
-                totalFeeEarnedSol: pos.pnl.totalFeeEarnedSol,
-                depositValueSol: pos.pnl.depositValueSol,
-                dryRun: result.dryRun,
-              });
+              try {
+                saveExitRecord({
+                  timestamp: new Date().toISOString(),
+                  positionAddress: posKey,
+                  poolAddress: pos.poolAddress.toBase58(),
+                  tokenXSymbol: pos.tokenXSymbol,
+                  tokenYSymbol: pos.tokenYSymbol,
+                  receivedX: result.receivedX,
+                  receivedY: result.receivedY,
+                  pnlPercent: pos.pnl.pnlPercent,
+                  pnlSol: pos.pnl.pnlSol,
+                  totalFeeEarnedSol: pos.pnl.totalFeeEarnedSol,
+                  depositValueSol: pos.pnl.depositValueSol,
+                  dryRun: result.dryRun,
+                  swapSuccess: result.swapResult?.success ?? null,
+                  swapReason: result.swapError ?? null,
+                });
+              } catch (saveErr) {
+                logError("saveExitRecord failed (non-fatal)", saveErr);
+              }
             }
           } else {
             tracked.state = "MONITORING";

@@ -186,14 +186,23 @@ export async function autoSwapAfterExit(params: {
     return result;
   }
 
-  // Check minimum value
+  // Check minimum value — only block swap if we KNOW the value is below threshold.
+  // If USD value is unknown (0 from no price available), skip cleanly without failing exit.
   const usdValue = await getTokenValueUsd(
     params.receivedTokenMint,
     rawAmount.toString(),
     decimals
   );
-  if (usdValue <= CONFIG.autoSwapMinUsd) {
+  if (usdValue > 0 && usdValue < CONFIG.autoSwapMinUsd) {
     result.reason = `${params.receivedTokenSymbol} value $${usdValue.toFixed(3)} below $${CONFIG.autoSwapMinUsd.toFixed(2)} minimum`;
+    return result;
+  }
+  if (usdValue === 0) {
+    result.reason = `no USD price available for ${params.receivedTokenSymbol}, swap skipped`;
+    log("WARN", result.reason, {
+      mint: params.receivedTokenMint,
+      rawAmount: rawAmount.toString(),
+    });
     return result;
   }
 

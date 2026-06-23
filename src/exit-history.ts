@@ -15,6 +15,8 @@ export interface ExitRecord {
   totalFeeEarnedSol: number;
   depositValueSol: number;
   dryRun: boolean;
+  swapSuccess: boolean | null;
+  swapReason: string | null;
 }
 
 const HISTORY_FILE = path.resolve(__dirname, "..", "logs", "exit-history.json");

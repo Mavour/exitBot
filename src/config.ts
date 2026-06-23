@@ -58,7 +58,7 @@ export const CONFIG = {
   bbStdDev: parseNumber("BB_STD_DEV", 2, 0.1),
   priorityFeeMicrolamports: parseNumber(
     "PRIORITY_FEE_MICROLAMPORTS",
-    10000,
+    0,
     0
   ),
   computeUnitLimit: parseNumber(
