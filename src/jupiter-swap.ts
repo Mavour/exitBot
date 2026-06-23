@@ -73,18 +73,55 @@ async function getTokenValueUsd(
   rawAmount: string,
   decimals: number
 ): Promise<number> {
+  const humanAmount = Number(rawAmount) / Math.pow(10, decimals);
+  if (!Number.isFinite(humanAmount) || humanAmount <= 0) return 0;
+
+  const jupiterPrice = await fetchJupiterPrice(mint);
+  if (jupiterPrice !== null) {
+    return humanAmount * jupiterPrice;
+  }
+
+  const dexPrice = await fetchDexScreenerPrice(mint);
+  if (dexPrice !== null) {
+    return humanAmount * dexPrice;
+  }
+
+  return 0;
+}
+
+async function fetchJupiterPrice(mint: string): Promise<number | null> {
   try {
-    const humanAmount = Number(rawAmount) / Math.pow(10, decimals);
-    if (!Number.isFinite(humanAmount) || humanAmount <= 0) return 0;
-    const url = `https://price.jup.ag/v4/price?ids=${mint}`;
+    const url = `https://api.jup.ag/price/v2?ids=${mint}`;
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!res.ok) return 0;
+    if (!res.ok) return null;
     const json = (await res.json()) as any;
-    const price = json?.data?.[mint]?.price;
-    if (typeof price !== "number") return 0;
-    return humanAmount * price;
+    const entry = json?.data?.[mint];
+    const price = entry?.price;
+    return typeof price === "number" && price > 0 ? price : null;
   } catch {
-    return 0;
+    return null;
+  }
+}
+
+async function fetchDexScreenerPrice(mint: string): Promise<number | null> {
+  try {
+    const url = `https://api.dexscreener.com/latest/dex/tokens/${mint}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!res.ok) return null;
+    const json = (await res.json()) as any;
+    const pairs = Array.isArray(json?.pairs) ? json.pairs : [];
+    const solanaPair = pairs
+      .filter((p: any) => p?.chainId === "solana")
+      .sort((a: any, b: any) => {
+        const la = Number(a?.liquidity?.usd ?? a?.liquidityUsd ?? 0);
+        const lb = Number(b?.liquidity?.usd ?? b?.liquidityUsd ?? 0);
+        return lb - la;
+      })[0];
+    if (!solanaPair) return null;
+    const price = Number(solanaPair.priceUsd);
+    return Number.isFinite(price) && price > 0 ? price : null;
+  } catch {
+    return null;
   }
 }
 
