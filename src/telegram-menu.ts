@@ -199,6 +199,23 @@ async function editTelegramMessage(
   }
 }
 
+async function deleteTelegramMessage(
+  chatId: string,
+  messageId: number
+): Promise<void> {
+  try {
+    const url = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/deleteMessage`;
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, message_id: messageId }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch (err) {
+    logError("Telegram deleteMessage failed", err);
+  }
+}
+
 async function answerCallbackQuery(
   callbackQueryId: string,
   text?: string
@@ -314,6 +331,9 @@ export async function handleCallbackQuery(
   if (callbackData.startsWith("recap_")) {
     if (callbackData === "recap_close") {
       await answerCallbackQuery(callbackQueryId, "Closed");
+      if (messageId) {
+        await deleteTelegramMessage(String(chatId), messageId);
+      }
       return;
     }
     if (callbackData === "recap_nop") {
