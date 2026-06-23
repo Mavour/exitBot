@@ -7,6 +7,7 @@ import {
   handleMenuCommand,
   handleStatusCommand,
   handlePositionsCommand,
+  handleRecapCommand,
   handleTextInput,
   handleCallbackQuery,
   handleStartCommand,
@@ -44,6 +45,7 @@ export async function setupBotCommands(): Promise<void> {
           commands: [
             { command: "menu", description: "⚙️ Bot Configuration" },
             { command: "positions", description: "📍 Active Positions" },
+            { command: "recap", description: "📋 Exit History Recap" },
             { command: "status", description: "📊 Bot Status" },
             { command: "start", description: "🔄 Restart Bot" },
           ],
@@ -278,10 +280,12 @@ async function handleUpdate(update: any): Promise<void> {
   if (!chatId || !isAuthorized(chatId)) return;
 
   if (update.callback_query) {
+    const msgId = update.callback_query.message?.message_id;
     await handleCallbackQuery(
       chatId,
       update.callback_query.data,
-      update.callback_query.id
+      update.callback_query.id,
+      msgId
     );
     return;
   }
@@ -300,6 +304,8 @@ async function handleUpdate(update: any): Promise<void> {
     await handleStatusCommand(chatId);
   } else if (text === "/positions") {
     await handlePositionsCommand(chatId);
+  } else if (text === "/recap") {
+    await handleRecapCommand(chatId);
   } else if (text === "/start") {
     await handleStartCommand(chatId);
   } else if (text === "/cancel") {

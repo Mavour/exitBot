@@ -20,6 +20,7 @@ import {
   notifyOORRight,
   notifyOORLeft,
 } from "./telegram";
+import { saveExitRecord } from "./exit-history";
 
 const REQUIRED_CANDLES = 60;
 const POSITION_REFETCH_INTERVAL = 10;
@@ -322,6 +323,23 @@ export async function startMonitor(): Promise<void> {
               pnl: pos.pnl,
               swapResult: result.swapResult,
             });
+
+            if (pos.pnl) {
+              saveExitRecord({
+                timestamp: new Date().toISOString(),
+                positionAddress: posKey,
+                poolAddress: pos.poolAddress.toBase58(),
+                tokenXSymbol: pos.tokenXSymbol,
+                tokenYSymbol: pos.tokenYSymbol,
+                receivedX: result.receivedX,
+                receivedY: result.receivedY,
+                pnlPercent: pos.pnl.pnlPercent,
+                pnlSol: pos.pnl.pnlSol,
+                totalFeeEarnedSol: pos.pnl.totalFeeEarnedSol,
+                depositValueSol: pos.pnl.depositValueSol,
+                dryRun: result.dryRun,
+              });
+            }
           } else {
             tracked.state = "MONITORING";
             log("WARN", "Exit failed, reverting to MONITORING", {

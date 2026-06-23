@@ -1,6 +1,9 @@
 import { log, logError } from "./logger";
 import { CONFIG } from "./config";
 import { wallet } from "./wallet";
+import { connection } from "./wallet";
+import { LAMPORTS_PER_SOL } from "@solana/web3.js";
+import { getExitHistory, ExitRecord } from "./exit-history";
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
@@ -169,6 +172,33 @@ async function sendTelegramMessage(
   }
 }
 
+async function editTelegramMessage(
+  text: string,
+  chatId: string,
+  messageId: number,
+  replyMarkup?: any
+): Promise<void> {
+  try {
+    const url = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/editMessageText`;
+    const body: any = {
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      disable_web_page_preview: true,
+    };
+    if (text.includes("<")) body.parse_mode = "HTML";
+    if (replyMarkup) body.reply_markup = replyMarkup;
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (err) {
+    logError("Telegram editMessage failed", err);
+  }
+}
+
 async function answerCallbackQuery(
   callbackQueryId: string,
   text?: string
@@ -271,13 +301,49 @@ export async function handleStatusCommand(chatId: number): Promise<void> {
 export async function handleCallbackQuery(
   chatId: number,
   callbackData: string,
-  callbackQueryId: string
+  callbackQueryId: string,
+  messageId?: number
 ): Promise<void> {
   if (!isAuthorized(chatId)) return;
 
   if (callbackData === "close") {
     await answerCallbackQuery(callbackQueryId, "Menu closed");
     return;
+  }
+
+  if (callbackData.startsWith("recap_")) {
+    if (callbackData === "recap_close") {
+      await answerCallbackQuery(callbackQueryId, "Closed");
+      return;
+    }
+    if (callbackData === "recap_nop") {
+      await answerCallbackQuery(callbackQueryId, "");
+      return;
+    }
+    if (callbackData.startsWith("recap_page_")) {
+      const page = parseInt(callbackData.slice(11), 10);
+      if (isNaN(page) || !messageId) {
+        await answerCallbackQuery(callbackQueryId, "Error");
+        return;
+      }
+
+      const history = getExitHistory();
+      const totalPages = Math.ceil(history.length / ITEMS_PER_PAGE) || 1;
+
+      let balanceSol = 0;
+      try {
+        const balance = await connection.getBalance(wallet.publicKey);
+        balanceSol = balance / LAMPORTS_PER_SOL;
+      } catch {}
+
+      const lines = formatRecapLines(history, page);
+      lines.splice(1, 0, `💰 Balance: ${balanceSol.toFixed(4)} SOL`);
+
+      const keyboard = buildRecapKeyboard(page, totalPages);
+      await answerCallbackQuery(callbackQueryId, `Page ${page + 1}`);
+      await editTelegramMessage(lines.join("\n"), String(chatId), messageId, keyboard);
+      return;
+    }
   }
 
   if (callbackData.startsWith("param_")) {
@@ -419,6 +485,99 @@ export async function handlePositionsCommand(chatId: number): Promise<void> {
       String(chatId)
     );
   }
+}
+
+const ITEMS_PER_PAGE = 10;
+
+function buildRecapKeyboard(page: number, totalPages: number) {
+  const row: any[] = [];
+  if (totalPages <= 1) {
+    row.push({ text: "❌ Close", callback_data: "recap_close" });
+    return { inline_keyboard: [row] };
+  }
+  const prevDisabled = page === 0;
+  const nextDisabled = page >= totalPages - 1;
+  row.push({
+    text: prevDisabled ? "◀️ Prev" : "◀️ Prev",
+    callback_data: prevDisabled ? "recap_nop" : `recap_page_${page - 1}`,
+  });
+  row.push({
+    text: `[${page + 1}/${totalPages}]`,
+    callback_data: "recap_nop",
+  });
+  row.push({
+    text: nextDisabled ? "Next ▶️" : "Next ▶️",
+    callback_data: nextDisabled ? "recap_nop" : `recap_page_${page + 1}`,
+  });
+  return {
+    inline_keyboard: [
+      row,
+      [{ text: "❌ Close", callback_data: "recap_close" }],
+    ],
+  };
+}
+
+function formatRecapLines(history: ExitRecord[], page: number): string[] {
+  const totalCount = history.length;
+  const totalPnlSol = history.reduce((sum, r) => sum + r.pnlSol, 0);
+  const totalFees = history.reduce((sum, r) => sum + r.totalFeeEarnedSol, 0);
+  const pnlSign = totalPnlSol >= 0 ? "🟢 +" : "🔴 ";
+  const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE) || 1;
+
+  const lines: string[] = [
+    "<b>📋 Exit Recap</b>",
+    "",
+    `Total Closed: ${totalCount}`,
+    `Total PNL: ${pnlSign}${totalPnlSol.toFixed(4)} SOL`,
+    `Total Fees Earned: ${totalFees.toFixed(4)} SOL`,
+    "",
+    `── Page ${page + 1}/${totalPages} ──`,
+    "",
+  ];
+
+  const start = page * ITEMS_PER_PAGE;
+  const end = Math.min(start + ITEMS_PER_PAGE, totalCount);
+  const pageItems = history.slice(start, end);
+
+  for (let i = 0; i < pageItems.length; i++) {
+    const r = pageItems[i];
+    const num = start + i + 1;
+    const pnlSign = r.pnlSol >= 0 ? "🟢 +" : "🔴 ";
+    const pnlPctSign = r.pnlPercent >= 0 ? "+" : "";
+    const date = r.timestamp.slice(0, 16).replace("T", " ");
+    lines.push(
+      `${num}. <b>${r.tokenXSymbol}/${r.tokenYSymbol}</b>`,
+      `   PNL: ${pnlSign}${r.pnlSol.toFixed(4)} SOL (${pnlPctSign}${r.pnlPercent.toFixed(2)}%)`,
+      `   Fees: ${r.totalFeeEarnedSol.toFixed(4)} SOL`,
+      `   ${date}`,
+    );
+  }
+
+  if (totalCount === 0) {
+    lines.push("No exit history yet.");
+  }
+
+  return lines;
+}
+
+export async function handleRecapCommand(chatId: number): Promise<void> {
+  if (!isAuthorized(chatId)) return;
+
+  const history = getExitHistory();
+  const totalPages = Math.ceil(history.length / ITEMS_PER_PAGE) || 1;
+  const page = 0;
+
+  let balanceSol = 0;
+  try {
+    const balance = await connection.getBalance(wallet.publicKey);
+    balanceSol = balance / LAMPORTS_PER_SOL;
+  } catch {}
+
+  const lines = formatRecapLines(history, page);
+  lines.splice(1, 0, `💰 Balance: ${balanceSol.toFixed(4)} SOL`);
+
+  const keyboard = buildRecapKeyboard(page, totalPages);
+  await sendTelegramMessage(lines.join("\n"), String(chatId), keyboard);
 }
 
 export { pendingInput, isAuthorized };
