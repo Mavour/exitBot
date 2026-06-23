@@ -73,9 +73,14 @@ async function sendWithRetry(
   tx: Transaction,
   wallet: Keypair
 ): Promise<string> {
-  const cuLimitIx = buildCUILimitIx();
-  const priorityIx = buildPriorityFeeIx();
-  const allInstructions = [cuLimitIx, priorityIx, ...tx.instructions];
+  const CB_PROGRAM = ComputeBudgetProgram.programId;
+  const txHasComputeBudget = tx.instructions.some((ix) =>
+    ix.programId.equals(CB_PROGRAM)
+  );
+
+  const allInstructions = txHasComputeBudget
+    ? [...tx.instructions]
+    : [buildCUILimitIx(), buildPriorityFeeIx(), ...tx.instructions];
 
   const blockhash = await withRpcFallback(conn => conn.getLatestBlockhash(CONFIG.commitment));
   const message = new TransactionMessage({
@@ -87,8 +92,19 @@ async function sendWithRetry(
   const versionedTx = new VersionedTransaction(message);
   versionedTx.sign([wallet]);
 
-  const maxRetries = 3;
+  const maxRetries = 2;
   let lastErr: Error | undefined;
+
+  const isNonRetryable = (err: unknown): boolean => {
+    const msg = err instanceof Error ? err.message : String(err);
+    return (
+      msg.includes("duplicate instruction") ||
+      msg.includes("already processed") ||
+      msg.includes("Transaction simulation failed") ||
+      msg.includes("Blockhash not found") ||
+      msg.includes("invalid account data")
+    );
+  };
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let sig: string | undefined;
@@ -99,6 +115,12 @@ async function sendWithRetry(
       }));
     } catch (sendErr) {
       lastErr = sendErr instanceof Error ? sendErr : new Error(String(sendErr));
+      if (isNonRetryable(sendErr)) {
+        log("ERROR", `Transaction send failed (non-retryable)`, {
+          error: lastErr.message,
+        });
+        throw lastErr;
+      }
       if (attempt < maxRetries) {
         const delay = 1000 * Math.pow(2, attempt);
         log("WARN", `Transaction send failed, retrying in ${delay}ms`, {
@@ -121,8 +143,16 @@ async function sendWithRetry(
         },
         CONFIG.commitment
       ));
+      if (txHasComputeBudget) {
+        log("INFO", `Tx confirmed (SDK compute budget used)`, { signature: sig });
+      }
       return sig;
     } catch (confirmErr) {
+      if (isNonRetryable(confirmErr)) {
+        const errMsg = confirmErr instanceof Error ? confirmErr.message : String(confirmErr);
+        log("ERROR", `Confirm failed (non-retryable)`, { error: errMsg });
+        throw confirmErr instanceof Error ? confirmErr : new Error(errMsg);
+      }
       const errMsg = confirmErr instanceof Error ? confirmErr.message : String(confirmErr);
       const status = await withRpcFallback(conn =>
         conn.getSignatureStatus(sig, { searchTransactionHistory: true })
@@ -138,7 +168,7 @@ async function sendWithRetry(
       lastErr = confirmErr instanceof Error ? confirmErr : new Error(errMsg);
       if (attempt < maxRetries) {
         const delay = 1000 * Math.pow(2, attempt);
-        log("WARN", `Confirm failed (will retry send), delay ${delay}ms`, {
+        log("WARN", `Confirm failed, retrying in ${delay}ms`, {
           attempt: attempt + 1,
           maxRetries,
           error: lastErr.message,
