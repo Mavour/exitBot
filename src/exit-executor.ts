@@ -183,13 +183,16 @@ export async function executeFullExit(
 
     let swapTokenMint: string | null = null;
     let swapTokenSymbol: string | null = null;
+    let swapTokenDecimals: number | undefined;
 
     if (!isXSol) {
       swapTokenMint = position.baseTokenMint;
       swapTokenSymbol = position.tokenXSymbol;
+      swapTokenDecimals = position.dlmmPool.tokenX.mint.decimals;
     } else if (!isYSol) {
       swapTokenMint = position.quoteTokenMint;
       swapTokenSymbol = position.tokenYSymbol;
+      swapTokenDecimals = position.dlmmPool.tokenY.mint.decimals;
     }
 
     if (swapTokenMint) {
@@ -200,6 +203,7 @@ export async function executeFullExit(
         wallet,
         connection,
         dryRun,
+        tokenDecimals: swapTokenDecimals,
       });
     } else {
       result.swapResult = {

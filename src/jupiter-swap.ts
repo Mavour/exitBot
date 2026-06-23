@@ -95,6 +95,7 @@ export async function autoSwapAfterExit(params: {
   wallet: Keypair;
   connection: Connection;
   dryRun: boolean;
+  tokenDecimals?: number;
 }): Promise<SwapResult> {
   const result: SwapResult = {
     success: false,
@@ -114,13 +115,17 @@ export async function autoSwapAfterExit(params: {
     return result;
   }
 
-  // Get token decimals
+  // Get token decimals — use pool metadata if provided, otherwise fallback to lookup
   let decimals: number;
-  try {
-    decimals = await getTokenDecimals(params.receivedTokenMint, params.connection);
-  } catch (err) {
-    result.reason = `Failed to get token decimals: ${err instanceof Error ? err.message : String(err)}`;
-    return result;
+  if (params.tokenDecimals !== undefined) {
+    decimals = params.tokenDecimals;
+  } else {
+    try {
+      decimals = await getTokenDecimals(params.receivedTokenMint, params.connection);
+    } catch (err) {
+      result.reason = `Failed to get token decimals: ${err instanceof Error ? err.message : String(err)}`;
+      return result;
+    }
   }
 
   // Re-fetch actual token balance from wallet after exit
