@@ -153,6 +153,14 @@ export async function fetchAllActivePositions(
       continue;
     }
 
+    let activeBinId: number | null = null;
+    try {
+      const activeBin = await withRpcFallback(conn => dlmmPool.getActiveBin());
+      activeBinId = activeBin.binId;
+    } catch (err) {
+      log("WARN", `Failed to get active bin for pool ${pool.poolAddress.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     const baseSymbol = await getTokenSymbol(pool.tokenXMint);
     const quoteSymbol = await getTokenSymbol(pool.tokenYMint);
     const poolPrice = Number(pool.poolPrice);
@@ -176,28 +184,36 @@ export async function fetchAllActivePositions(
         continue;
       }
 
-      // OOR detection — use API fields directly
-      const isOutOfRange = pool.outOfRange === true ||
+      // OOR detection — SDK bin comparison is primary (most reliable)
+      const lowerBinId = posInfo.lowerBinId;
+      const upperBinId = posInfo.upperBinId;
+      const binOOR = activeBinId !== null
+        ? (activeBinId < lowerBinId || activeBinId > upperBinId)
+        : null;
+
+      const apiOOR = pool.outOfRange === true ||
         (Array.isArray(pool.positionsOutOfRange) && pool.positionsOutOfRange.includes(posAddrStr));
 
-      // Determine OOR direction using bin price data from SDK position data
-      const posAny = posData as any;
-      const lowerBinPrice = Number(posAny.lowerBinArray?.bins?.[0]?.price ?? 0);
-      const upperBinPrice = Number(posAny.upperBinArray?.bins?.slice(-1)?.[0]?.price ?? 0);
-      const midPrice = (lowerBinPrice + upperBinPrice) / 2;
+      const isOutOfRange = binOOR === true || (binOOR === null && apiOOR);
 
       let isOORRight = false;
       let isOORLeft = false;
       let isInRange = true;
 
       if (isOutOfRange) {
-        if (Number.isFinite(poolPrice) && Number.isFinite(midPrice)) {
-          if (poolPrice > midPrice) {
-            isOORRight = true;
-            isInRange = false;
-          } else {
-            isOORLeft = true;
-            isInRange = false;
+        isInRange = false;
+        if (activeBinId !== null && activeBinId > upperBinId) {
+          isOORRight = true;
+        } else if (activeBinId !== null && activeBinId < lowerBinId) {
+          isOORLeft = true;
+        } else {
+          const posAny = posData as any;
+          const lowerBinPrice = Number(posAny.lowerBinArray?.bins?.[0]?.price ?? 0);
+          const upperBinPrice = Number(posAny.upperBinArray?.bins?.slice(-1)?.[0]?.price ?? 0);
+          if (lowerBinPrice > 0 && upperBinPrice > 0 && Number.isFinite(poolPrice)) {
+            const midPrice = (lowerBinPrice + upperBinPrice) / 2;
+            if (poolPrice > midPrice) isOORRight = true;
+            else isOORLeft = true;
           }
         }
       }
@@ -208,8 +224,11 @@ export async function fetchAllActivePositions(
         isOORLeft,
         isOORRight,
         poolPrice,
+        activeBinId,
         fromBinId: posInfo.lowerBinId,
         toBinId: posInfo.upperBinId,
+        binOOR,
+        apiOOR,
       });
 
       positions.push({
