@@ -19,6 +19,7 @@ import {
   notifyExitFailed,
   notifyOORRight,
   notifyOORLeft,
+  notifyOORUnknown,
 } from "./telegram";
 import { saveExitRecord } from "./exit-history";
 
@@ -26,6 +27,10 @@ const REQUIRED_CANDLES = 60;
 const POSITION_REFETCH_INTERVAL = 10;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
+
+function safeNotify(fn: () => Promise<void>, label: string): void {
+  fn().catch((err) => logError(`${label} notify failed`, err));
+}
 
 interface TrackedPosition {
   position: ActivePosition;
@@ -92,12 +97,16 @@ export async function startMonitor(): Promise<void> {
     return { position: p, state: "MONITORING" as PositionState };
   });
 
-  notifyAgentStart({
-    positionsCount: trackedPositions.length,
-    dryRun: CONFIG.dryRun,
-    rsiThreshold: CONFIG.rsiThreshold,
-    pollIntervalMs: CONFIG.pollIntervalMs,
-  });
+  safeNotify(
+    () =>
+      notifyAgentStart({
+        positionsCount: trackedPositions.length,
+        dryRun: CONFIG.dryRun,
+        rsiThreshold: CONFIG.rsiThreshold,
+        pollIntervalMs: CONFIG.pollIntervalMs,
+      }),
+    "agent start"
+  );
 
   log("INFO", "Monitor started", {
     positionsCount: trackedPositions.length,
@@ -125,25 +134,28 @@ export async function startMonitor(): Promise<void> {
         );
 
         for (const pos of freshPositions) {
-          if (
-            !trackedPositions.some(
-              (t) =>
-                t.position.positionPubkey.toBase58() ===
-                pos.positionPubkey.toBase58()
-            )
-          ) {
-            const key = pos.positionPubkey.toBase58();
-            if (!positionCreatedAt.has(key)) {
-              positionCreatedAt.set(key, Date.now());
+          const existing = trackedPositions.find(
+            (t) =>
+              t.position.positionPubkey.toBase58() ===
+              pos.positionPubkey.toBase58()
+          );
+          if (existing) {
+            if (existing.state === "MONITORING") {
+              existing.position = pos;
             }
-            trackedPositions.push({
-              position: pos,
-              state: "MONITORING",
-            });
-            log("INFO", "New position detected", {
-              positionAddress: pos.positionPubkey.toBase58(),
-            });
+            continue;
           }
+          const key = pos.positionPubkey.toBase58();
+          if (!positionCreatedAt.has(key)) {
+            positionCreatedAt.set(key, Date.now());
+          }
+          trackedPositions.push({
+            position: pos,
+            state: "MONITORING",
+          });
+          log("INFO", "New position detected", {
+            positionAddress: pos.positionPubkey.toBase58(),
+          });
         }
 
         const freshKeys = new Set(
@@ -214,13 +226,17 @@ export async function startMonitor(): Promise<void> {
             });
             const lastNotified = oorRightLastNotified.get(posKey) ?? 0;
             if (Date.now() - lastNotified > hourMs) {
-              notifyOORRight({
-                positionAddress: posKey,
-                poolAddress: pos.poolAddress.toBase58(),
-                rsi: snapshot.rsi,
-                bbUpper: snapshot.bb.upper,
-                price: currentPrice,
-              });
+              safeNotify(
+                () =>
+                  notifyOORRight({
+                    positionAddress: posKey,
+                    poolAddress: pos.poolAddress.toBase58(),
+                    rsi: snapshot.rsi,
+                    bbUpper: snapshot.bb.upper,
+                    price: currentPrice,
+                  }),
+                "OOR right"
+              );
               oorRightLastNotified.set(posKey, Date.now());
             }
           }
@@ -232,15 +248,37 @@ export async function startMonitor(): Promise<void> {
             });
             const lastNotified = oorLeftLastNotified.get(posKey) ?? 0;
             if (Date.now() - lastNotified > hourMs) {
-              notifyOORLeft({
-                positionAddress: posKey,
-                poolAddress: pos.poolAddress.toBase58(),
-                rsi: snapshot.rsi,
-                bbUpper: snapshot.bb.upper,
-                price: currentPrice,
-              });
+              safeNotify(
+                () =>
+                  notifyOORLeft({
+                    positionAddress: posKey,
+                    poolAddress: pos.poolAddress.toBase58(),
+                    rsi: snapshot.rsi,
+                    bbUpper: snapshot.bb.upper,
+                    price: currentPrice,
+                  }),
+                "OOR left"
+              );
               oorLeftLastNotified.set(posKey, Date.now());
             }
+          }
+
+          if (!pos.isInRange && !pos.isOORRight && !pos.isOORLeft) {
+            log("WARN", "Position is OOR but direction unknown", {
+              positionAddress: posKey,
+              price: currentPrice,
+            });
+            safeNotify(
+              () =>
+                notifyOORUnknown({
+                  positionAddress: posKey,
+                  poolAddress: pos.poolAddress.toBase58(),
+                  rsi: snapshot.rsi,
+                  bbUpper: snapshot.bb.upper,
+                  price: currentPrice,
+                }),
+              "OOR unknown"
+            );
           }
 
           const isOORNow = pos.isOORRight || pos.isOORLeft;
@@ -268,15 +306,19 @@ export async function startMonitor(): Promise<void> {
               bbUpper: snapshot.bb.upper.toFixed(8),
               poolAddress: pos.poolAddress.toBase58(),
             });
-            notifyExitTriggered({
-              positionAddress: posKey,
-              poolAddress: pos.poolAddress.toBase58(),
-              rsi: snapshot.rsi,
-              price: snapshot.price,
-              bbUpper: snapshot.bb.upper,
-              trigger: "RSI_BB",
-              pnl: pos.pnl,
-            });
+            safeNotify(
+              () =>
+                notifyExitTriggered({
+                  positionAddress: posKey,
+                  poolAddress: pos.poolAddress.toBase58(),
+                  rsi: snapshot.rsi,
+                  price: snapshot.price,
+                  bbUpper: snapshot.bb.upper,
+                  trigger: "RSI_BB",
+                  pnl: pos.pnl,
+                }),
+              "exit triggered"
+            );
             tracked.state = "EXIT_TRIGGERED";
           }
         } catch (err) {
@@ -312,17 +354,21 @@ export async function startMonitor(): Promise<void> {
               receivedY: result.receivedY,
               txCount: result.txSignatures.length,
             });
-            notifyExitSuccess({
-              positionAddress: posKey,
-              tokenXSymbol: pos.tokenXSymbol,
-              tokenYSymbol: pos.tokenYSymbol,
-              receivedX: result.receivedX,
-              receivedY: result.receivedY,
-              txSignatures: result.txSignatures,
-              dryRun: result.dryRun,
-              pnl: pos.pnl,
-              swapResult: result.swapResult,
-            });
+            safeNotify(
+              () =>
+                notifyExitSuccess({
+                  positionAddress: posKey,
+                  tokenXSymbol: pos.tokenXSymbol,
+                  tokenYSymbol: pos.tokenYSymbol,
+                  receivedX: result.receivedX,
+                  receivedY: result.receivedY,
+                  txSignatures: result.txSignatures,
+                  dryRun: result.dryRun,
+                  pnl: pos.pnl,
+                  swapResult: result.swapResult,
+                }),
+              "exit success"
+            );
 
             if (pos.pnl) {
               saveExitRecord({
@@ -346,18 +392,26 @@ export async function startMonitor(): Promise<void> {
               positionAddress: posKey,
               error: result.error,
             });
-            notifyExitFailed({
-              positionAddress: posKey,
-              error: result.error ?? "Unknown error",
-            });
+            safeNotify(
+              () =>
+                notifyExitFailed({
+                  positionAddress: posKey,
+                  error: result.error ?? "Unknown error",
+                }),
+              "exit failed"
+            );
           }
         } catch (err) {
           tracked.state = "MONITORING";
           logError(`Unexpected error during exit of ${posKey}`, err);
-          notifyExitFailed({
-            positionAddress: posKey,
-            error: err instanceof Error ? err.message : String(err),
-          });
+          safeNotify(
+            () =>
+              notifyExitFailed({
+                positionAddress: posKey,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            "exit failed (exception)"
+          );
         } finally {
           inFlightSet.delete(posKey);
         }

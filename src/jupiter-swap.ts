@@ -43,7 +43,7 @@ async function getTokenDecimals(
         tokenDecimalsCache[t.address] = t.decimals;
       }
     } catch {
-      tokenDecimalsCache = {};
+      throw new Error(`Failed to fetch Jupiter token list for decimals lookup`);
     }
   }
   if (tokenDecimalsCache[mint] !== undefined) {

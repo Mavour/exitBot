@@ -163,6 +163,27 @@ export async function notifyOORLeft(params: {
   await sendMessage(msg);
 }
 
+export async function notifyOORUnknown(params: {
+  positionAddress: string;
+  poolAddress: string;
+  rsi: number;
+  bbUpper: number;
+  price: number;
+}): Promise<void> {
+  if (!enabled) return;
+  const msg = [
+    "<b>⚠️ OUT OF RANGE — DIRECTION UNKNOWN</b>",
+    "",
+    `<b>Position:</b> <code>${params.positionAddress}</code>`,
+    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
+    `<b>BB Upper:</b> ${params.bbUpper}`,
+    `<b>Price:</b> ${params.price}`,
+    "Status: OOR but direction could not be determined — monitoring for exit signal",
+  ].join("\n");
+  await sendMessage(msg);
+}
+
 export async function notifyExitTriggered(params: {
   positionAddress: string;
   poolAddress: string;

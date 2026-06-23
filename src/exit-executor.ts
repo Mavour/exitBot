@@ -1,6 +1,7 @@
 import {
   Connection,
   Keypair,
+  PublicKey,
   Transaction,
   TransactionInstruction,
   TransactionMessage,
@@ -31,13 +32,50 @@ function buildPriorityFeeIx(): TransactionInstruction {
   });
 }
 
+function buildCUILimitIx(): TransactionInstruction {
+  return ComputeBudgetProgram.setComputeUnitLimit({
+    units: CONFIG.computeUnitLimit,
+  });
+}
+
+async function getActualReceivedAmount(
+  connection: Connection,
+  wallet: Keypair,
+  mintX: string,
+  mintY: string
+): Promise<{ x: string; y: string; xDec: number; yDec: number } | null> {
+  try {
+    const fetchOne = async (mint: string) => {
+      const accounts = await withRpcFallback(conn =>
+        conn.getParsedTokenAccountsByOwner(wallet.publicKey, {
+          mint: new PublicKey(mint),
+        })
+      );
+      const acc = accounts.value[0]?.account.data.parsed.info.tokenAmount;
+      if (!acc) return { amount: "0", decimals: 0 };
+      return { amount: acc.amount, decimals: acc.decimals };
+    };
+    const [x, y] = await Promise.all([fetchOne(mintX), fetchOne(mintY)]);
+    return {
+      x: divDecimals(x.amount, x.decimals),
+      y: divDecimals(y.amount, y.decimals),
+      xDec: x.decimals,
+      yDec: y.decimals,
+    };
+  } catch (err) {
+    logError("Failed to fetch actual received amounts", err);
+    return null;
+  }
+}
+
 async function sendWithRetry(
   connection: Connection,
   tx: Transaction,
   wallet: Keypair
 ): Promise<string> {
+  const cuLimitIx = buildCUILimitIx();
   const priorityIx = buildPriorityFeeIx();
-  const allInstructions = [priorityIx, ...tx.instructions];
+  const allInstructions = [cuLimitIx, priorityIx, ...tx.instructions];
 
   const blockhash = await withRpcFallback(conn => conn.getLatestBlockhash(CONFIG.commitment));
   const message = new TransactionMessage({
@@ -53,12 +91,28 @@ async function sendWithRetry(
   let lastErr: Error | undefined;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    let sig: string | undefined;
     try {
-      const sig = await withRpcFallback(conn => conn.sendTransaction(versionedTx, {
+      sig = await withRpcFallback(conn => conn.sendTransaction(versionedTx, {
         skipPreflight: false,
         maxRetries: 1,
       }));
+    } catch (sendErr) {
+      lastErr = sendErr instanceof Error ? sendErr : new Error(String(sendErr));
+      if (attempt < maxRetries) {
+        const delay = 1000 * Math.pow(2, attempt);
+        log("WARN", `Transaction send failed, retrying in ${delay}ms`, {
+          attempt: attempt + 1,
+          maxRetries,
+          error: lastErr.message,
+        });
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      break;
+    }
 
+    try {
       await withRpcFallback(conn => conn.confirmTransaction(
         {
           signature: sig,
@@ -67,13 +121,24 @@ async function sendWithRetry(
         },
         CONFIG.commitment
       ));
-
       return sig;
-    } catch (err) {
-      lastErr = err instanceof Error ? err : new Error(String(err));
+    } catch (confirmErr) {
+      const errMsg = confirmErr instanceof Error ? confirmErr.message : String(confirmErr);
+      const status = await withRpcFallback(conn =>
+        conn.getSignatureStatus(sig, { searchTransactionHistory: true })
+      );
+      const confStatus = status?.value?.confirmationStatus;
+      if (confStatus === "confirmed" || confStatus === "finalized") {
+        log("INFO", `Tx already confirmed despite confirm timeout`, {
+          signature: sig,
+          confirmationStatus: confStatus,
+        });
+        return sig;
+      }
+      lastErr = confirmErr instanceof Error ? confirmErr : new Error(errMsg);
       if (attempt < maxRetries) {
         const delay = 1000 * Math.pow(2, attempt);
-        log("WARN", `Transaction failed, retrying in ${delay}ms`, {
+        log("WARN", `Confirm failed (will retry send), delay ${delay}ms`, {
           attempt: attempt + 1,
           maxRetries,
           error: lastErr.message,
@@ -159,15 +224,24 @@ export async function executeFullExit(
       const sigs = await sendClaimTxs(connection, removeTxs, wallet);
       result.txSignatures.push(...sigs);
 
-      const xDec = position.dlmmPool.tokenX.mint.decimals;
-      const yDec = position.dlmmPool.tokenY.mint.decimals;
-      result.receivedX = divDecimals(position.totalXAmount, xDec);
-      result.receivedY = divDecimals(position.totalYAmount, yDec);
+      const xMint = position.dlmmPool.tokenX.mint.address.toBase58();
+      const yMint = position.dlmmPool.tokenY.mint.address.toBase58();
+      const actual = await getActualReceivedAmount(connection, wallet, xMint, yMint);
+      if (actual) {
+        result.receivedX = actual.x;
+        result.receivedY = actual.y;
+      } else {
+        const xDec = position.dlmmPool.tokenX.mint.decimals;
+        const yDec = position.dlmmPool.tokenY.mint.decimals;
+        result.receivedX = divDecimals(position.totalXAmount, xDec);
+        result.receivedY = divDecimals(position.totalYAmount, yDec);
+      }
 
       log("EXIT", "Remove liquidity confirmed", {
         signatures: sigs,
         receivedX: result.receivedX,
         receivedY: result.receivedY,
+        actualFetch: !!actual,
       });
     }
 
@@ -215,11 +289,16 @@ export async function executeFullExit(
       };
     }
 
-    result.success = true;
+    const swapOk = !result.swapResult || result.swapResult.success;
+    result.success = result.success && swapOk;
+    if (!swapOk && result.swapResult?.reason) {
+      result.error = `Swap skipped/failed: ${result.swapResult.reason}`;
+    }
     log("EXIT", `Exit complete for position ${posAddr}`, {
-      success: true,
+      success: result.success,
       txCount: result.txSignatures.length,
       swapResult: result.swapResult,
+      dryRun,
     });
   } catch (err) {
     result.success = false;

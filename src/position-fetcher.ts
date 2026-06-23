@@ -54,7 +54,7 @@ async function getTokenSymbol(mint: string): Promise<string> {
         tokenSymbolCache[t.address] = t.symbol;
       }
     } catch {
-      tokenSymbolCache = {};
+      return mint.slice(0, 6) + "...";
     }
   }
 
