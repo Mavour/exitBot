@@ -184,6 +184,27 @@ export async function notifyOORUnknown(params: {
   await sendMessage(msg);
 }
 
+export async function notifyBackInRange(params: {
+  positionAddress: string;
+  poolAddress: string;
+  rsi: number;
+  bbUpper: number;
+  price: number;
+}): Promise<void> {
+  if (!enabled) return;
+  const msg = [
+    "<b>✅ BACK IN RANGE</b>",
+    "",
+    `<b>Position:</b> <code>${params.positionAddress}</code>`,
+    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
+    `<b>BB Upper:</b> ${params.bbUpper}`,
+    `<b>Price:</b> ${params.price}`,
+    "Status: Position is now back in range — fees accumulating",
+  ].join("\n");
+  await sendMessage(msg);
+}
+
 export async function notifyExitTriggered(params: {
   positionAddress: string;
   poolAddress: string;

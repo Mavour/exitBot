@@ -20,6 +20,7 @@ import {
   notifyOORRight,
   notifyOORLeft,
   notifyOORUnknown,
+  notifyBackInRange,
 } from "./telegram";
 import { saveExitRecord } from "./exit-history";
 
@@ -282,6 +283,27 @@ export async function startMonitor(): Promise<void> {
           }
 
           const isOORNow = pos.isOORRight || pos.isOORLeft;
+          const isInRangeNow = pos.isInRange && !isOORNow;
+          const wasOORBefore = wasOOR.has(posKey);
+
+          if (wasOORBefore && isInRangeNow) {
+            log("INFO", "Position recovered to IN-RANGE", {
+              positionAddress: posKey,
+              price: currentPrice,
+            });
+            safeNotify(
+              () =>
+                notifyBackInRange({
+                  positionAddress: posKey,
+                  poolAddress: pos.poolAddress.toBase58(),
+                  rsi: snapshot.rsi,
+                  bbUpper: snapshot.bb.upper,
+                  price: currentPrice,
+                }),
+              "back in range"
+            );
+          }
+
           if (wasOOR.has(posKey) && !isOORNow) {
             oorRightLastNotified.delete(posKey);
             oorLeftLastNotified.delete(posKey);
