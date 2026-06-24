@@ -61,6 +61,18 @@ async function getTokenSymbol(mint: string): Promise<string> {
   return tokenSymbolCache[mint] || mint.slice(0, 6) + "...";
 }
 
+async function resolveTokenSymbol(
+  mint: string,
+  apiSymbol: unknown
+): Promise<string> {
+  if (typeof apiSymbol === "string") {
+    const trimmed = apiSymbol.trim();
+    const looksLikeMint = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed);
+    if (trimmed && !looksLikeMint) return trimmed;
+  }
+  return getTokenSymbol(mint);
+}
+
 function parsePNL(
   poolData: Record<string, unknown>
 ): PNLData | null {
@@ -161,8 +173,8 @@ export async function fetchAllActivePositions(
       log("WARN", `Failed to get active bin for pool ${pool.poolAddress.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    const baseSymbol = await getTokenSymbol(pool.tokenXMint);
-    const quoteSymbol = await getTokenSymbol(pool.tokenYMint);
+    const baseSymbol = await resolveTokenSymbol(pool.tokenXMint, pool.tokenX);
+    const quoteSymbol = await resolveTokenSymbol(pool.tokenYMint, pool.tokenY);
     const poolPrice = Number(pool.poolPrice);
 
     for (const posAddrStr of pool.listPositions) {
