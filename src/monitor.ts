@@ -1,9 +1,9 @@
 import { CONFIG } from "./config";
 import { connection, wallet, logWalletInfo } from "./wallet";
+import { PublicKey } from "@solana/web3.js";
 import {
   fetchAllActivePositions,
   ActivePosition,
-  PNLData,
 } from "./position-fetcher";
 import {
   getCandles15m,
@@ -23,6 +23,12 @@ import {
   notifyBackInRange,
 } from "./telegram";
 import { hasExitRecord, saveExitRecord } from "./exit-history";
+import {
+  getManualCloseSnapshots,
+  saveActivePositionSnapshots,
+  snapshotToManualExitRecord,
+  ManualCloseSnapshot,
+} from "./manual-close-cache";
 
 const REQUIRED_CANDLES = 60;
 const POSITION_REFETCH_INTERVAL = 10;
@@ -59,40 +65,49 @@ const wasOOR = new Set<string>();
 const lastIndicatorData = new Map<string, { price: number; rsi: number; bb: BollingerBand }>();
 const positionCreatedAt = new Map<string, number>();
 
-function saveManualCloseRecord(position: ActivePosition): void {
-  const posKey = position.positionPubkey.toBase58();
-  if (hasExitRecord(posKey)) {
+async function isPositionClosedOnChain(positionAddress: string): Promise<boolean> {
+  const accountInfo = await withRpcFallback(conn =>
+    conn.getAccountInfo(new PublicKey(positionAddress), CONFIG.commitment)
+  );
+  const owner = accountInfo?.owner?.toBase58();
+  return !accountInfo || owner === "11111111111111111111111111111111";
+}
+
+function saveManualCloseRecord(snapshot: ManualCloseSnapshot): void {
+  if (hasExitRecord(snapshot.positionAddress)) {
     log("INFO", "Manual close already present in exit history, skipping duplicate", {
-      positionAddress: posKey,
+      positionAddress: snapshot.positionAddress,
     });
     return;
   }
 
-  const pnl: PNLData = position.pnl ?? {
-    depositValueSol: 0,
-    currentValueSol: 0,
-    totalFeeEarnedSol: 0,
-    pnlSol: 0,
-    pnlPercent: 0,
-  };
+  saveExitRecord(snapshotToManualExitRecord(snapshot));
+}
 
-  saveExitRecord({
-    timestamp: new Date().toISOString(),
-    exitSource: "MANUAL",
-    positionAddress: posKey,
-    poolAddress: position.poolAddress.toBase58(),
-    tokenXSymbol: position.tokenXSymbol,
-    tokenYSymbol: position.tokenYSymbol,
-    receivedX: "0",
-    receivedY: "0",
-    pnlPercent: pnl.pnlPercent,
-    pnlSol: pnl.pnlSol,
-    totalFeeEarnedSol: pnl.totalFeeEarnedSol,
-    depositValueSol: pnl.depositValueSol,
-    dryRun: false,
-    swapSuccess: null,
-    swapReason: "Manual close detected on-chain",
-  });
+async function recordClosedSnapshots(activePositions: ActivePosition[]): Promise<void> {
+  const activeKeys = new Set(activePositions.map((p) => p.positionPubkey.toBase58()));
+  for (const snapshot of getManualCloseSnapshots()) {
+    if (activeKeys.has(snapshot.positionAddress) || hasExitRecord(snapshot.positionAddress)) {
+      continue;
+    }
+
+    try {
+      const isClosed = await isPositionClosedOnChain(snapshot.positionAddress);
+      if (!isClosed) {
+        log("WARN", "Snapshot missing from Meteora API but position account still exists", {
+          positionAddress: snapshot.positionAddress,
+        });
+        continue;
+      }
+
+      log("WARN", "Closed position detected from saved snapshot", {
+        positionAddress: snapshot.positionAddress,
+      });
+      saveManualCloseRecord(snapshot);
+    } catch (err) {
+      logError(`Failed to confirm closed snapshot ${snapshot.positionAddress}`, err);
+    }
+  }
 }
 
 async function handleShutdown(): Promise<void> {
@@ -125,6 +140,8 @@ export async function startMonitor(): Promise<void> {
   } catch (err) {
     logError("Failed to fetch positions on startup", err);
   }
+  saveActivePositionSnapshots(initialPositions);
+  await recordClosedSnapshots(initialPositions);
 
   trackedPositions = initialPositions.map((p) => {
     const key = p.positionPubkey.toBase58();
@@ -169,6 +186,8 @@ export async function startMonitor(): Promise<void> {
         const freshPositions = await withRpcFallback(conn =>
           fetchAllActivePositions(wallet.publicKey, conn)
         );
+        saveActivePositionSnapshots(freshPositions);
+        await recordClosedSnapshots(freshPositions);
 
         for (const pos of freshPositions) {
           const existing = trackedPositions.find(
@@ -198,22 +217,33 @@ export async function startMonitor(): Promise<void> {
         const freshKeys = new Set(
           freshPositions.map((p) => p.positionPubkey.toBase58())
         );
-        trackedPositions = trackedPositions.filter((t) => {
-          if (t.state === "EXITED") return false;
+        const nextTrackedPositions: TrackedPosition[] = [];
+        for (const t of trackedPositions) {
+          if (t.state === "EXITED") continue;
           const key = t.position.positionPubkey.toBase58();
           if (!freshKeys.has(key) && t.state === "MONITORING") {
-            log("WARN", "Position no longer active on-chain, removing from tracking", {
-              positionAddress: key,
-            });
             try {
-              saveManualCloseRecord(t.position);
+              const isClosed = await isPositionClosedOnChain(key);
+              if (!isClosed) {
+                log("WARN", "Position missing from Meteora API but still exists on-chain, keeping tracked", {
+                  positionAddress: key,
+                });
+                nextTrackedPositions.push(t);
+                continue;
+              }
+
+              log("WARN", "Position no longer active on-chain, removing from tracking", {
+                positionAddress: key,
+              });
             } catch (saveErr) {
-              logError("saveManualCloseRecord failed (non-fatal)", saveErr);
+              logError("manual close detection failed (non-fatal)", saveErr);
+              nextTrackedPositions.push(t);
             }
-            return false;
+            continue;
           }
-          return true;
-        });
+          nextTrackedPositions.push(t);
+        }
+        trackedPositions = nextTrackedPositions;
       } catch (err) {
         logError("Failed to re-fetch positions, using cached data", err);
       }
