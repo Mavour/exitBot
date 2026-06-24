@@ -4,6 +4,7 @@ import { log } from "./logger";
 
 export interface ExitRecord {
   timestamp: string;
+  exitSource?: "BOT" | "MANUAL";
   positionAddress: string;
   poolAddress: string;
   tokenXSymbol: string;
@@ -53,4 +54,8 @@ export function getExitHistory(): ExitRecord[] {
   } catch {
     return [];
   }
+}
+
+export function hasExitRecord(positionAddress: string): boolean {
+  return getExitHistory().some((r) => r.positionAddress === positionAddress);
 }

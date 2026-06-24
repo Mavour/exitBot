@@ -569,6 +569,7 @@ function formatRecapLines(history: ExitRecord[], page: number): string[] {
       `${num}. <b>${r.tokenXSymbol}/${r.tokenYSymbol}</b>`,
       `   PNL: ${pnlSign}${r.pnlSol.toFixed(4)} SOL (${pnlPctSign}${r.pnlPercent.toFixed(2)}%)`,
       `   Fees: ${r.totalFeeEarnedSol.toFixed(4)} SOL`,
+      ...(r.exitSource === "MANUAL" ? ["   Source: Manual close"] : []),
       `   ${date}`,
     );
   }

@@ -22,7 +22,7 @@ import {
   notifyOORUnknown,
   notifyBackInRange,
 } from "./telegram";
-import { saveExitRecord } from "./exit-history";
+import { hasExitRecord, saveExitRecord } from "./exit-history";
 
 const REQUIRED_CANDLES = 60;
 const POSITION_REFETCH_INTERVAL = 10;
@@ -58,6 +58,42 @@ const oorLeftLastNotified = new Map<string, number>();
 const wasOOR = new Set<string>();
 const lastIndicatorData = new Map<string, { price: number; rsi: number; bb: BollingerBand }>();
 const positionCreatedAt = new Map<string, number>();
+
+function saveManualCloseRecord(position: ActivePosition): void {
+  const posKey = position.positionPubkey.toBase58();
+  if (hasExitRecord(posKey)) {
+    log("INFO", "Manual close already present in exit history, skipping duplicate", {
+      positionAddress: posKey,
+    });
+    return;
+  }
+
+  const pnl: PNLData = position.pnl ?? {
+    depositValueSol: 0,
+    currentValueSol: 0,
+    totalFeeEarnedSol: 0,
+    pnlSol: 0,
+    pnlPercent: 0,
+  };
+
+  saveExitRecord({
+    timestamp: new Date().toISOString(),
+    exitSource: "MANUAL",
+    positionAddress: posKey,
+    poolAddress: position.poolAddress.toBase58(),
+    tokenXSymbol: position.tokenXSymbol,
+    tokenYSymbol: position.tokenYSymbol,
+    receivedX: "0",
+    receivedY: "0",
+    pnlPercent: pnl.pnlPercent,
+    pnlSol: pnl.pnlSol,
+    totalFeeEarnedSol: pnl.totalFeeEarnedSol,
+    depositValueSol: pnl.depositValueSol,
+    dryRun: false,
+    swapSuccess: null,
+    swapReason: "Manual close detected on-chain",
+  });
+}
 
 async function handleShutdown(): Promise<void> {
   if (isShuttingDown) return;
@@ -169,6 +205,11 @@ export async function startMonitor(): Promise<void> {
             log("WARN", "Position no longer active on-chain, removing from tracking", {
               positionAddress: key,
             });
+            try {
+              saveManualCloseRecord(t.position);
+            } catch (saveErr) {
+              logError("saveManualCloseRecord failed (non-fatal)", saveErr);
+            }
             return false;
           }
           return true;
@@ -401,6 +442,7 @@ export async function startMonitor(): Promise<void> {
               try {
                 saveExitRecord({
                   timestamp: new Date().toISOString(),
+                  exitSource: "BOT",
                   positionAddress: posKey,
                   poolAddress: pos.poolAddress.toBase58(),
                   tokenXSymbol: pos.tokenXSymbol,
