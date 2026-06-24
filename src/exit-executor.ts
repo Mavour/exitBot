@@ -218,14 +218,16 @@ async function runPostCloseAutoSwap(params: {
     receivedAmount: "0",
   });
 
-  if (first.success || params.dryRun) {
+  if (params.dryRun) {
     return first;
   }
 
-  log("WARN", "Auto-swap incomplete, scheduling 30s residual token re-check", {
+  log(first.success ? "EXIT" : "WARN", "Scheduling 30s residual token re-check", {
     mint: params.receivedTokenMint,
     symbol: params.receivedTokenSymbol,
     reason: first.reason,
+    firstSwapSuccess: first.success,
+    firstSwapTx: first.txSignature,
   });
 
   await new Promise((r) => setTimeout(r, 30000));
@@ -236,14 +238,29 @@ async function runPostCloseAutoSwap(params: {
   });
 
   if (retry.success) {
-    log("EXIT", "Post-close residual token retry succeeded", {
+    log("EXIT", "Post-close residual token check swapped remaining balance", {
       mint: params.receivedTokenMint,
       symbol: params.receivedTokenSymbol,
       tx: retry.txSignature,
       output: retry.outputAmount,
     });
-    retry.reason = retry.reason || `Swapped on 30s post-close re-check`;
+    retry.reason = retry.reason || `Swapped remaining balance on 30s post-close check`;
     return retry;
+  }
+
+  const retryReason = retry.reason || "";
+  const noResidualToken =
+    retryReason.startsWith(`No ${params.receivedTokenSymbol} balance`) ||
+    retryReason.includes("below $");
+
+  if (first.success && noResidualToken) {
+    log("EXIT", "Post-close residual token check found no swapable balance", {
+      mint: params.receivedTokenMint,
+      symbol: params.receivedTokenSymbol,
+      reason: retry.reason,
+      firstSwapTx: first.txSignature,
+    });
+    return first;
   }
 
   log("WARN", "Post-close residual token retry failed", {
