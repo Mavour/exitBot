@@ -205,6 +205,58 @@ function divDecimals(raw: string, decimals: number): string {
   return f ? `${whole}.${f}` : whole.toString();
 }
 
+async function runPostCloseAutoSwap(params: {
+  receivedTokenMint: string;
+  receivedTokenSymbol: string;
+  wallet: Keypair;
+  connection: Connection;
+  dryRun: boolean;
+  tokenDecimals?: number;
+}): Promise<SwapResult> {
+  const first = await autoSwapAfterExit({
+    ...params,
+    receivedAmount: "0",
+  });
+
+  if (first.success || params.dryRun) {
+    return first;
+  }
+
+  log("WARN", "Auto-swap incomplete, scheduling 30s residual token re-check", {
+    mint: params.receivedTokenMint,
+    symbol: params.receivedTokenSymbol,
+    reason: first.reason,
+  });
+
+  await new Promise((r) => setTimeout(r, 30000));
+
+  const retry = await autoSwapAfterExit({
+    ...params,
+    receivedAmount: "0",
+  });
+
+  if (retry.success) {
+    log("EXIT", "Post-close residual token retry succeeded", {
+      mint: params.receivedTokenMint,
+      symbol: params.receivedTokenSymbol,
+      tx: retry.txSignature,
+      output: retry.outputAmount,
+    });
+    retry.reason = retry.reason || `Swapped on 30s post-close re-check`;
+    return retry;
+  }
+
+  log("WARN", "Post-close residual token retry failed", {
+    mint: params.receivedTokenMint,
+    symbol: params.receivedTokenSymbol,
+    firstReason: first.reason,
+    retryReason: retry.reason,
+  });
+
+  retry.reason = `30s retry failed: ${retry.reason || first.reason || "swap incomplete"}`;
+  return retry;
+}
+
 export async function executeFullExit(
   position: ActivePosition,
   wallet: Keypair,
@@ -339,10 +391,9 @@ export async function executeFullExit(
     }
 
     if (swapTokenMint) {
-      result.swapResult = await autoSwapAfterExit({
+      result.swapResult = await runPostCloseAutoSwap({
         receivedTokenMint: swapTokenMint,
         receivedTokenSymbol: swapTokenSymbol ?? "?",
-        receivedAmount: "0",
         wallet,
         connection,
         dryRun,
