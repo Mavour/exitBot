@@ -9,12 +9,36 @@ import { CONFIG } from "./config";
 import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
 
-const JUPITER_API = "https://quote-api.jup.ag/v6";
+type JupiterApi = {
+  name: string;
+  baseUrl: string;
+  requiresApiKey: boolean;
+};
+
+const JUPITER_APIS: JupiterApi[] = [
+  {
+    name: "Jupiter Pro",
+    baseUrl: "https://api.jup.ag/swap/v1",
+    requiresApiKey: true,
+  },
+  {
+    name: "Jupiter Lite",
+    baseUrl: "https://lite-api.jup.ag/swap/v1",
+    requiresApiKey: false,
+  },
+  {
+    name: "Jupiter Legacy",
+    baseUrl: "https://quote-api.jup.ag/v6",
+    requiresApiKey: false,
+  },
+];
+const JUPITER_ULTRA_API = "https://api.jup.ag/ultra/v1";
 const SOL_MINT = "So11111111111111111111111111111111111111112";
 const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 export interface SwapResult {
   success: boolean;
+  inputMint?: string;
   inputSymbol: string;
   inputAmount: string;
   outputAmount: string;
@@ -23,6 +47,232 @@ export interface SwapResult {
 }
 
 let tokenDecimalsCache: Record<string, number> | null = null;
+
+function getJupiterApis(): JupiterApi[] {
+  if (CONFIG.jupiterApiKey) return JUPITER_APIS;
+  return JUPITER_APIS.filter((api) => !api.requiresApiKey);
+}
+
+function getJupiterHeaders(contentTypeJson = false): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (contentTypeJson) headers["Content-Type"] = "application/json";
+  if (CONFIG.jupiterApiKey) headers["x-api-key"] = CONFIG.jupiterApiKey;
+  return headers;
+}
+
+async function readErrorBody(res: Response): Promise<string> {
+  const body = await res.text().catch(() => "");
+  return body ? `: ${body.slice(0, 180)}` : "";
+}
+
+async function fetchJupiterQuote(params: {
+  inputMint: string;
+  outputMint: string;
+  amount: bigint;
+  slippageBps: number;
+}): Promise<{ quote: any; api: JupiterApi }> {
+  const qs = new URLSearchParams({
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    amount: params.amount.toString(),
+    slippageBps: String(params.slippageBps),
+    restrictIntermediateTokens: "true",
+    instructionVersion: "V2",
+  });
+  let lastErr = "";
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    for (const api of getJupiterApis()) {
+      try {
+        const res = await fetch(`${api.baseUrl}/quote?${qs.toString()}`, {
+          headers: getJupiterHeaders(),
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!res.ok) {
+          lastErr = `${api.name} quote HTTP ${res.status}${await readErrorBody(res)}`;
+          continue;
+        }
+        const quote = (await res.json()) as any;
+        if (quote?.error) {
+          lastErr = `${api.name} quote error: ${quote.error}`;
+          continue;
+        }
+        return { quote, api };
+      } catch (err) {
+        lastErr = `${api.name} quote failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`;
+      }
+    }
+
+    if (attempt < 3) {
+      const delayMs = 1500 * attempt;
+      log("WARN", `Jupiter quote attempt ${attempt}/3 failed, retrying`, {
+        error: lastErr,
+        delayMs,
+      });
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+
+  throw new Error(lastErr || "Jupiter quote unavailable");
+}
+
+async function fetchJupiterSwapTransaction(
+  api: JupiterApi,
+  quote: any,
+  userPublicKey: string
+): Promise<string> {
+  let lastErr = "";
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(`${api.baseUrl}/swap`, {
+        method: "POST",
+        headers: getJupiterHeaders(true),
+        body: JSON.stringify({
+          quoteResponse: quote,
+          userPublicKey,
+          wrapAndUnwrapSol: true,
+          dynamicComputeUnitLimit: true,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!res.ok) {
+        lastErr = `${api.name} swap HTTP ${res.status}${await readErrorBody(res)}`;
+      } else {
+        const swapData = (await res.json()) as {
+          swapTransaction?: string;
+          error?: string;
+        };
+        if (swapData.error) {
+          lastErr = `${api.name} swap error: ${swapData.error}`;
+        } else if (swapData.swapTransaction) {
+          return swapData.swapTransaction;
+        } else {
+          lastErr = `${api.name} swap response missing transaction`;
+        }
+      }
+    } catch (err) {
+      lastErr = `${api.name} swap failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`;
+    }
+
+    if (attempt < 3) {
+      const delayMs = 1500 * attempt;
+      log("WARN", `Jupiter swap build attempt ${attempt}/3 failed, retrying`, {
+        api: api.name,
+        error: lastErr,
+        delayMs,
+      });
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+
+  throw new Error(lastErr || "Jupiter swap endpoint unavailable");
+}
+
+async function executeJupiterUltraSwap(params: {
+  inputMint: string;
+  outputMint: string;
+  amount: bigint;
+  wallet: Keypair;
+}): Promise<{ signature: string; outputAmount?: string }> {
+  if (!CONFIG.jupiterApiKey) {
+    throw new Error("JUPITER_API_KEY not configured");
+  }
+
+  const qs = new URLSearchParams({
+    inputMint: params.inputMint,
+    outputMint: params.outputMint,
+    amount: params.amount.toString(),
+    taker: params.wallet.publicKey.toBase58(),
+  });
+  let lastErr = "";
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const orderRes = await fetch(`${JUPITER_ULTRA_API}/order?${qs.toString()}`, {
+        headers: getJupiterHeaders(),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (!orderRes.ok) {
+        lastErr = `Jupiter Ultra order HTTP ${orderRes.status}${await readErrorBody(orderRes)}`;
+        throw new Error(lastErr);
+      }
+
+      const order = (await orderRes.json()) as {
+        transaction?: string;
+        requestId?: string;
+        errorCode?: string;
+        errorMessage?: string;
+      };
+      if (order.errorCode || order.errorMessage) {
+        lastErr = `Jupiter Ultra order error: ${order.errorCode || ""} ${order.errorMessage || ""}`.trim();
+        throw new Error(lastErr);
+      }
+      if (!order.transaction || !order.requestId) {
+        lastErr = "Jupiter Ultra order response missing transaction/requestId";
+        throw new Error(lastErr);
+      }
+
+      const tx = VersionedTransaction.deserialize(
+        Buffer.from(order.transaction, "base64")
+      );
+      tx.sign([params.wallet]);
+      const signedTransaction = Buffer.from(tx.serialize()).toString("base64");
+
+      const executeRes = await fetch(`${JUPITER_ULTRA_API}/execute`, {
+        method: "POST",
+        headers: getJupiterHeaders(true),
+        body: JSON.stringify({
+          signedTransaction,
+          requestId: order.requestId,
+        }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (!executeRes.ok) {
+        lastErr = `Jupiter Ultra execute HTTP ${executeRes.status}${await readErrorBody(executeRes)}`;
+        throw new Error(lastErr);
+      }
+
+      const executed = (await executeRes.json()) as {
+        status?: string;
+        signature?: string;
+        outputAmountResult?: string;
+        code?: string;
+        error?: string;
+      };
+      if (executed.status === "Failed" || executed.error) {
+        lastErr = `Jupiter Ultra execute failed: ${executed.code || executed.error || "unknown"}`;
+        throw new Error(lastErr);
+      }
+      if (!executed.signature) {
+        lastErr = "Jupiter Ultra execute response missing signature";
+        throw new Error(lastErr);
+      }
+
+      return {
+        signature: executed.signature,
+        outputAmount: executed.outputAmountResult,
+      };
+    } catch (err) {
+      lastErr = err instanceof Error ? err.message : String(err);
+      if (attempt < 2) {
+        const delayMs = 1500 * attempt;
+        log("WARN", `Jupiter Ultra attempt ${attempt}/2 failed, retrying`, {
+          error: lastErr,
+          delayMs,
+        });
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+
+  throw new Error(lastErr || "Jupiter Ultra unavailable");
+}
 
 async function getTokenDecimals(
   mint: string,
@@ -136,6 +386,7 @@ export async function autoSwapAfterExit(params: {
 }): Promise<SwapResult> {
   const result: SwapResult = {
     success: false,
+    inputMint: params.receivedTokenMint,
     inputSymbol: params.receivedTokenSymbol,
     inputAmount: params.receivedAmount,
     outputAmount: "0",
@@ -206,20 +457,48 @@ export async function autoSwapAfterExit(params: {
     return result;
   }
 
+  if (!params.dryRun && CONFIG.jupiterApiKey) {
+    try {
+      const ultra = await executeJupiterUltraSwap({
+        inputMint: params.receivedTokenMint,
+        outputMint: SOL_MINT,
+        amount: rawAmount,
+        wallet: params.wallet,
+      });
+      const ultraOutAmount = ultra.outputAmount
+        ? Number(ultra.outputAmount) / 10 ** 9
+        : 0;
+      if (ultraOutAmount > 0) {
+        result.outputAmount = ultraOutAmount.toFixed(6);
+      }
+      result.success = true;
+      result.txSignature = ultra.signature;
+      result.reason = "Jupiter Ultra swap executed";
+      log("EXIT", "Auto-swap confirmed via Jupiter Ultra", {
+        signature: ultra.signature,
+        input: `${result.inputAmount} ${params.receivedTokenSymbol}`,
+        output: result.outputAmount,
+      });
+      return result;
+    } catch (err) {
+      log("WARN", "Jupiter Ultra auto-swap failed, falling back to Swap API", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   // Get Jupiter quote
   let quote: any;
+  let quoteApi: JupiterApi;
   try {
-    const quoteUrl = `${JUPITER_API}/quote?inputMint=${params.receivedTokenMint}&outputMint=${SOL_MINT}&amount=${rawAmount}&slippageBps=${CONFIG.slippageBps}`;
-    const res = await fetch(quoteUrl, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) {
-      result.reason = "Jupiter quote unavailable";
-      return result;
-    }
-    quote = await res.json();
-    if (quote.error) {
-      result.reason = `Jupiter quote error: ${quote.error}`;
-      return result;
-    }
+    const quoted = await fetchJupiterQuote({
+      inputMint: params.receivedTokenMint,
+      outputMint: SOL_MINT,
+      amount: rawAmount,
+      slippageBps: CONFIG.slippageBps,
+    });
+    quote = quoted.quote;
+    quoteApi = quoted.api;
   } catch (err) {
     result.reason = `Jupiter quote failed: ${err instanceof Error ? err.message : String(err)}`;
     return result;
@@ -236,26 +515,13 @@ export async function autoSwapAfterExit(params: {
 
   // Execute swap
   try {
-    const swapRes = await fetch(`${JUPITER_API}/swap`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        quoteResponse: quote,
-        userPublicKey: params.wallet.publicKey.toBase58(),
-        wrapAndUnwrapSol: true,
-        dynamicComputeUnitLimit: true,
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
-
-    if (!swapRes.ok) {
-      result.reason = "Jupiter swap endpoint error";
-      return result;
-    }
-
-    const swapData = (await swapRes.json()) as { swapTransaction: string };
+    const swapTransaction = await fetchJupiterSwapTransaction(
+      quoteApi,
+      quote,
+      params.wallet.publicKey.toBase58()
+    );
     const tx = VersionedTransaction.deserialize(
-      Buffer.from(swapData.swapTransaction, "base64")
+      Buffer.from(swapTransaction, "base64")
     );
     tx.sign([params.wallet]);
 

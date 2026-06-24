@@ -278,12 +278,16 @@ export async function notifyExitSuccess(params: {
       );
     } else {
       const reason = params.swapResult.reason || params.swapError || "unknown";
+      const residualToken =
+        params.swapResult.inputMint ||
+        params.swapResult.inputSymbol ||
+        (params.tokenXSymbol !== "SOL" ? params.tokenXSymbol : params.tokenYSymbol);
       lines.push(
         "",
         "<b>🔄 Auto-Swap</b>",
         `⚠️ Swap skipped: ${reason}`,
         "Tokens remain in wallet. Sell manually via Jupiter UI:",
-        `<a href="https://jup.ag/swap/SOL-${params.tokenXSymbol !== "SOL" ? params.tokenXSymbol : params.tokenYSymbol}">Open Jupiter</a>`,
+        `<a href="https://jup.ag/swap/${residualToken}-SOL">Open Jupiter</a>`,
       );
     }
   }
