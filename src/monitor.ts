@@ -24,6 +24,7 @@ import {
 } from "./telegram";
 import { hasExitRecord, saveExitRecord } from "./exit-history";
 import {
+  createManualCloseSnapshot,
   getManualCloseSnapshots,
   saveActivePositionSnapshots,
   snapshotToManualExitRecord,
@@ -263,6 +264,25 @@ export async function startMonitor(): Promise<void> {
 
         inFlightSet.add(posKey);
         try {
+          let closedOnChain = false;
+          try {
+            closedOnChain = await isPositionClosedOnChain(posKey);
+          } catch (closedCheckErr) {
+            logError(`Failed to check on-chain close status for ${posKey}`, closedCheckErr);
+          }
+
+          if (closedOnChain) {
+            log("WARN", "Position account closed on-chain, recording manual close", {
+              positionAddress: posKey,
+            });
+            const snapshot =
+              getManualCloseSnapshots().find((s) => s.positionAddress === posKey) ??
+              createManualCloseSnapshot(pos);
+            saveManualCloseRecord(snapshot);
+            tracked.state = "EXITED";
+            continue;
+          }
+
           const candles = await getCandles15m(
             pos.tokenMint,
             REQUIRED_CANDLES

@@ -40,7 +40,9 @@ function fallbackPnl(): PNLData {
   };
 }
 
-function toSnapshot(position: ActivePosition): ManualCloseSnapshot {
+export function createManualCloseSnapshot(
+  position: ActivePosition
+): ManualCloseSnapshot {
   const pnl = position.pnl ?? fallbackPnl();
   return {
     timestamp: new Date().toISOString(),
@@ -73,7 +75,7 @@ export function saveActivePositionSnapshots(positions: ActivePosition[]): void {
       byPosition.set(snapshot.positionAddress, snapshot);
     }
     for (const position of positions) {
-      const snapshot = toSnapshot(position);
+      const snapshot = createManualCloseSnapshot(position);
       byPosition.set(snapshot.positionAddress, snapshot);
     }
     fs.writeFileSync(
