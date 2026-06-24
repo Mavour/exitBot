@@ -111,7 +111,8 @@ export function checkExitConditions(candles: Candle[]): IndicatorSnapshot {
     return fallback;
   }
 
-  const shouldExit = rsiValue >= CONFIG.rsiThreshold && price > bb.upper;
+  const bbExitPrice = bb[CONFIG.bbExitBand];
+  const shouldExit = rsiValue >= CONFIG.rsiThreshold && price > bbExitPrice;
 
   return {
     shouldExit,

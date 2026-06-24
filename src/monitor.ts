@@ -303,6 +303,8 @@ export async function startMonitor(): Promise<void> {
             bbUpper: snapshot.bb.upper.toFixed(8),
             bbMiddle: snapshot.bb.middle.toFixed(8),
             bbLower: snapshot.bb.lower.toFixed(8),
+            bbExitBand: CONFIG.bbExitBand,
+            bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
             price: snapshot.price.toFixed(8),
             shouldExit: snapshot.shouldExit,
             isOORRight: pos.isOORRight,
@@ -417,6 +419,8 @@ export async function startMonitor(): Promise<void> {
               rsi: snapshot.rsi.toFixed(2),
               price: snapshot.price.toFixed(8),
               bbUpper: snapshot.bb.upper.toFixed(8),
+              bbExitBand: CONFIG.bbExitBand,
+              bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
               poolAddress: pos.poolAddress.toBase58(),
             });
             safeNotify(
@@ -426,7 +430,8 @@ export async function startMonitor(): Promise<void> {
                   poolAddress: pos.poolAddress.toBase58(),
                   rsi: snapshot.rsi,
                   price: snapshot.price,
-                  bbUpper: snapshot.bb.upper,
+                  bbExitBand: CONFIG.bbExitBand,
+                  bbExitPrice: snapshot.bb[CONFIG.bbExitBand],
                   trigger: "RSI_BB",
                   pnl: pos.pnl,
                 }),

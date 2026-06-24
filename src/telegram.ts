@@ -43,6 +43,7 @@ export async function setupBotCommands(): Promise<void> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           commands: [
+            { command: "config", description: "⚙️ Bot Configuration" },
             { command: "menu", description: "⚙️ Bot Configuration" },
             { command: "positions", description: "📍 Active Positions" },
             { command: "recap", description: "📋 Exit History Recap" },
@@ -210,7 +211,8 @@ export async function notifyExitTriggered(params: {
   poolAddress: string;
   rsi: number;
   price: number;
-  bbUpper: number;
+  bbExitBand: "upper" | "middle" | "lower";
+  bbExitPrice: number;
   trigger: "RSI_BB";
   pnl: PNLData | null;
 }): Promise<void> {
@@ -223,7 +225,7 @@ export async function notifyExitTriggered(params: {
     `<b>Trigger:</b> 📊 RSI+BB Signal`,
     `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
     `<b>Price:</b> ${params.price}`,
-    `<b>BB Upper:</b> ${params.bbUpper}`,
+    `<b>BB ${params.bbExitBand}:</b> ${params.bbExitPrice}`,
   ];
   if (params.pnl) {
     const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
@@ -348,7 +350,7 @@ async function handleUpdate(update: any): Promise<void> {
     return;
   }
 
-  if (text === "/menu") {
+  if (text === "/menu" || text === "/config") {
     await handleMenuCommand(chatId);
   } else if (text === "/status") {
     await handleStatusCommand(chatId);

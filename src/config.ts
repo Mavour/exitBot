@@ -45,6 +45,17 @@ function parseCommitment(name: string, defaultValue: Commitment): Commitment {
   );
 }
 
+type BBExitBand = "upper" | "middle" | "lower";
+
+function parseBBExitBand(name: string, defaultValue: BBExitBand): BBExitBand {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return defaultValue;
+  const normalized = raw.toLowerCase() === "mid" ? "middle" : raw.toLowerCase();
+  const valid: BBExitBand[] = ["upper", "middle", "lower"];
+  if (valid.includes(normalized as BBExitBand)) return normalized as BBExitBand;
+  throw new Error(`Invalid ${name}: must be one of upper, middle, lower`);
+}
+
 export const CONFIG = {
   rpcUrl: requireEnv("RPC_URL"),
   rpcUrlFallback1: process.env.RPC_URL_FALLBACK_1 || 'https://api.mainnet-beta.solana.com',
@@ -56,6 +67,7 @@ export const CONFIG = {
   rsiThreshold: parseNumber("RSI_THRESHOLD", 90, 1),
   bbPeriod: parseNumber("BB_PERIOD", 20, 2),
   bbStdDev: parseNumber("BB_STD_DEV", 2, 0.1),
+  bbExitBand: parseBBExitBand("BB_EXIT_BAND", "upper"),
   priorityFeeMicrolamports: parseNumber(
     "PRIORITY_FEE_MICROLAMPORTS",
     0,

@@ -61,6 +61,15 @@ const PARAMS: Record<string, ParamConfig> = {
     errorMsg: "Must be between 0.5-4",
     restartRequired: true,
   },
+  bbExitBand: {
+    envKey: "BB_EXIT_BAND",
+    label: "BB Exit Band",
+    unit: "",
+    validate: (v) => ["upper", "middle", "mid", "lower"].includes(v.toLowerCase()),
+    errorMsg: "Valid values: upper, middle, mid, lower",
+    restartRequired: true,
+    transform: (v) => (v.toLowerCase() === "mid" ? "middle" : v.toLowerCase()),
+  },
   pollInterval: {
     envKey: "POLL_INTERVAL_MS",
     label: "Poll Interval",
@@ -129,6 +138,8 @@ function getCurrentValue(paramKey: string): string {
       return String(CONFIG.bbPeriod);
     case "bbStdDev":
       return String(CONFIG.bbStdDev);
+    case "bbExitBand":
+      return CONFIG.bbExitBand;
     case "pollInterval":
       return String(CONFIG.pollIntervalMs / 1000);
     case "slippage":
@@ -265,6 +276,12 @@ function buildMainMenuKeyboard() {
   ]);
   rows.push([
     {
+      text: `🎚 BB Exit: ${getCurrentValue("bbExitBand")}`,
+      callback_data: "param_bbExitBand",
+    },
+  ]);
+  rows.push([
+    {
       text: `⏱ Poll Interval: ${getCurrentValue("pollInterval")}s`,
       callback_data: "param_pollInterval",
     },
@@ -308,7 +325,7 @@ export async function handleStatusCommand(chatId: number): Promise<void> {
     "<b>⚙️ Current Config</b>",
     `Timeframe: ${getCurrentValue("timeframe")}`,
     `RSI: period=${getCurrentValue("rsiPeriod")}, threshold=${getCurrentValue("rsiThreshold")}`,
-    `BB: period=${getCurrentValue("bbPeriod")}, stddev=${getCurrentValue("bbStdDev")}σ`,
+    `BB: period=${getCurrentValue("bbPeriod")}, stddev=${getCurrentValue("bbStdDev")}σ, exit=${getCurrentValue("bbExitBand")}`,
     `Poll: ${getCurrentValue("pollInterval")}s`,
     `Slippage: ${getCurrentValue("slippage")}%`,
   ].join("\n");
