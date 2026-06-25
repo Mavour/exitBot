@@ -111,5 +111,6 @@ export function snapshotToManualExitRecord(
     dryRun: false,
     swapSuccess: null,
     swapReason: reason,
+    estimated: true,
   };
 }

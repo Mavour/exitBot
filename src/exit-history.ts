@@ -18,6 +18,7 @@ export interface ExitRecord {
   dryRun: boolean;
   swapSuccess: boolean | null;
   swapReason: string | null;
+  estimated?: boolean;
 }
 
 const HISTORY_FILE = path.resolve(__dirname, "..", "logs", "exit-history.json");

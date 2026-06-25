@@ -7,6 +7,7 @@ import {
   TransactionMessage,
   VersionedTransaction,
   ComputeBudgetProgram,
+  SendTransactionError,
 } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
 import { CONFIG } from "./config";
@@ -14,6 +15,8 @@ import { ActivePosition } from "./position-fetcher";
 import { autoSwapAfterExit, SwapResult } from "./jupiter-swap";
 import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
+
+const SEND_TX_TIMEOUT_MS = 30_000;
 
 export interface ExitResult {
   success: boolean;
@@ -38,6 +41,68 @@ function buildCUILimitIx(): TransactionInstruction {
   return ComputeBudgetProgram.setComputeUnitLimit({
     units: CONFIG.computeUnitLimit,
   });
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function isSendTransactionError(err: unknown): err is SendTransactionError {
+  return (
+    err instanceof SendTransactionError ||
+    (typeof err === "object" &&
+      err !== null &&
+      typeof (err as { getLogs?: unknown }).getLogs === "function")
+  );
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(label)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function formatSendError(
+  connection: Connection,
+  err: unknown
+): Promise<string> {
+  const base = errorMessage(err);
+  if (!isSendTransactionError(err)) return base;
+
+  let logs = err.logs;
+  let logsFetchError: string | undefined;
+  if (!logs || logs.length === 0) {
+    try {
+      logs = await err.getLogs(connection);
+    } catch (logsErr) {
+      logsFetchError = errorMessage(logsErr);
+    }
+  }
+
+  const detail = [
+    base,
+    logs && logs.length > 0
+      ? `Full logs:\n${logs.join("\n")}`
+      : "Full logs: []",
+  ];
+
+  if (logsFetchError) {
+    detail.push(`getLogs failed: ${logsFetchError}`);
+  }
+
+  return detail.join("\n");
 }
 
 async function getActualReceivedAmount(
@@ -84,42 +149,47 @@ async function sendWithRetry(
     ? [...tx.instructions]
     : [buildCUILimitIx(), buildPriorityFeeIx(), ...tx.instructions];
 
-  const blockhash = await withRpcFallback(conn => conn.getLatestBlockhash(CONFIG.commitment));
-  const message = new TransactionMessage({
-    payerKey: wallet.publicKey,
-    recentBlockhash: blockhash.blockhash,
-    instructions: allInstructions,
-  }).compileToV0Message();
-
-  const versionedTx = new VersionedTransaction(message);
-  versionedTx.sign([wallet]);
-
   const maxRetries = 2;
   let lastErr: Error | undefined;
 
   const isNonRetryable = (err: unknown): boolean => {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     return (
       msg.includes("duplicate instruction") ||
       msg.includes("already processed") ||
       msg.includes("Transaction simulation failed") ||
-      msg.includes("Blockhash not found") ||
       msg.includes("invalid account data")
     );
   };
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     let sig: string | undefined;
+    const blockhash = await withRpcFallback(conn => conn.getLatestBlockhash(CONFIG.commitment));
+    const message = new TransactionMessage({
+      payerKey: wallet.publicKey,
+      recentBlockhash: blockhash.blockhash,
+      instructions: allInstructions,
+    }).compileToV0Message();
+
+    const versionedTx = new VersionedTransaction(message);
+    versionedTx.sign([wallet]);
+
     try {
-      sig = await withRpcFallback(conn => conn.sendTransaction(versionedTx, {
-        skipPreflight: false,
-        maxRetries: 1,
-      }));
+      sig = await withTimeout(
+        connection.sendTransaction(versionedTx, {
+          skipPreflight: false,
+          maxRetries: 1,
+        }),
+        SEND_TX_TIMEOUT_MS,
+        `sendTransaction timed out after ${SEND_TX_TIMEOUT_MS}ms`
+      );
     } catch (sendErr) {
-      lastErr = sendErr instanceof Error ? sendErr : new Error(String(sendErr));
+      const detailedError = await formatSendError(connection, sendErr);
+      lastErr = new Error(detailedError);
       if (isNonRetryable(sendErr)) {
         log("ERROR", `Transaction send failed (non-retryable)`, {
-          error: lastErr.message,
+          attempt: attempt + 1,
+          error: detailedError,
         });
         throw lastErr;
       }
@@ -128,7 +198,7 @@ async function sendWithRetry(
         log("WARN", `Transaction send failed, retrying in ${delay}ms`, {
           attempt: attempt + 1,
           maxRetries,
-          error: lastErr.message,
+          error: detailedError,
         });
         await new Promise((r) => setTimeout(r, delay));
         continue;

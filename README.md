@@ -174,6 +174,7 @@ Agent ngecek tiap 60 detik. Untuk setiap posisi DLMM aktif di dompet kamu:
 | `WALLET_PRIVATE_KEY` | — | ✅ | Private key dompet (base58) |
 | `GMGN_API_KEY` | — | ✅ | API key dari GMGN OpenAPI |
 | `POLL_INTERVAL_MS` | 60000 | ❌ | Interval pengecekan (ms) |
+| `EXIT_COOLDOWN_MINUTES` | 3 | ❌ | Waktu tunggu setelah posisi terdeteksi sebelum exit trigger aktif |
 | `DRY_RUN` | true | ❌ | `true` = simulasi aja, `false` = beneran exit |
 | `RSI_PERIOD` | 2 | ❌ | Period RSI |
 | `RSI_THRESHOLD` | 90 | ❌ | Ambang batas RSI buat exit |

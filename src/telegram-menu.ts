@@ -79,6 +79,14 @@ const PARAMS: Record<string, ParamConfig> = {
     restartRequired: true,
     transform: (v) => String(+v * 1000),
   },
+  exitCooldown: {
+    envKey: "EXIT_COOLDOWN_MINUTES",
+    label: "Exit Cooldown",
+    unit: "min",
+    validate: (v) => Number.isInteger(+v) && +v >= 0 && +v <= 60,
+    errorMsg: "Must be integer between 0-60 minutes",
+    restartRequired: true,
+  },
   slippage: {
     envKey: "SLIPPAGE_BPS",
     label: "Slippage",
@@ -142,6 +150,8 @@ function getCurrentValue(paramKey: string): string {
       return CONFIG.bbExitBand;
     case "pollInterval":
       return String(CONFIG.pollIntervalMs / 1000);
+    case "exitCooldown":
+      return String(CONFIG.exitCooldownMs / 60_000);
     case "slippage":
       return String(CONFIG.slippageBps / 100);
     case "dryRun":
@@ -288,6 +298,12 @@ function buildMainMenuKeyboard() {
   ]);
   rows.push([
     {
+      text: `Exit Cooldown: ${getCurrentValue("exitCooldown")} min`,
+      callback_data: "param_exitCooldown",
+    },
+  ]);
+  rows.push([
+    {
       text: `💧 Slippage: ${getCurrentValue("slippage")}%`,
       callback_data: "param_slippage",
     },
@@ -327,6 +343,7 @@ export async function handleStatusCommand(chatId: number): Promise<void> {
     `RSI: period=${getCurrentValue("rsiPeriod")}, threshold=${getCurrentValue("rsiThreshold")}`,
     `BB: period=${getCurrentValue("bbPeriod")}, stddev=${getCurrentValue("bbStdDev")}σ, exit=${getCurrentValue("bbExitBand")}`,
     `Poll: ${getCurrentValue("pollInterval")}s`,
+    `Exit cooldown: ${getCurrentValue("exitCooldown")} min`,
     `Slippage: ${getCurrentValue("slippage")}%`,
   ].join("\n");
   await sendTelegramMessage(msg, String(chatId));
@@ -526,6 +543,10 @@ export async function handlePositionsCommand(chatId: number): Promise<void> {
 
 const ITEMS_PER_PAGE = 10;
 
+function isEstimatedManualRecord(record: ExitRecord): boolean {
+  return record.estimated === true || record.exitSource === "MANUAL";
+}
+
 function buildRecapKeyboard(page: number, totalPages: number) {
   const row: any[] = [];
   if (totalPages <= 1) {
@@ -556,8 +577,10 @@ function buildRecapKeyboard(page: number, totalPages: number) {
 
 function formatRecapLines(history: ExitRecord[], page: number): string[] {
   const totalCount = history.length;
-  const totalPnlSol = history.reduce((sum, r) => sum + r.pnlSol, 0);
-  const totalFees = history.reduce((sum, r) => sum + r.totalFeeEarnedSol, 0);
+  const officialHistory = history.filter((r) => !isEstimatedManualRecord(r));
+  const estimatedCount = history.length - officialHistory.length;
+  const totalPnlSol = officialHistory.reduce((sum, r) => sum + r.pnlSol, 0);
+  const totalFees = officialHistory.reduce((sum, r) => sum + r.totalFeeEarnedSol, 0);
   const pnlSign = totalPnlSol >= 0 ? "🟢 +" : "🔴 ";
   const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE) || 1;
 
@@ -567,6 +590,7 @@ function formatRecapLines(history: ExitRecord[], page: number): string[] {
     `Total Closed: ${totalCount}`,
     `Total PNL: ${pnlSign}${totalPnlSol.toFixed(4)} SOL`,
     `Total Fees Earned: ${totalFees.toFixed(4)} SOL`,
+    ...(estimatedCount > 0 ? [`Manual estimates excluded: ${estimatedCount}`] : []),
     "",
     `── Page ${page + 1}/${totalPages} ──`,
     "",
@@ -582,11 +606,16 @@ function formatRecapLines(history: ExitRecord[], page: number): string[] {
     const pnlSign = r.pnlSol >= 0 ? "🟢 +" : "🔴 ";
     const pnlPctSign = r.pnlPercent >= 0 ? "+" : "";
     const date = r.timestamp.slice(0, 16).replace("T", " ");
+    const estimatedManual = isEstimatedManualRecord(r);
     lines.push(
       `${num}. <b>${r.tokenXSymbol}/${r.tokenYSymbol}</b>`,
-      `   PNL: ${pnlSign}${r.pnlSol.toFixed(4)} SOL (${pnlPctSign}${r.pnlPercent.toFixed(2)}%)`,
-      `   Fees: ${r.totalFeeEarnedSol.toFixed(4)} SOL`,
-      ...(r.exitSource === "MANUAL" ? ["   Source: Manual close"] : []),
+      estimatedManual
+        ? `   PNL: estimate ${pnlSign}${r.pnlSol.toFixed(4)} SOL (${pnlPctSign}${r.pnlPercent.toFixed(2)}%)`
+        : `   PNL: ${pnlSign}${r.pnlSol.toFixed(4)} SOL (${pnlPctSign}${r.pnlPercent.toFixed(2)}%)`,
+      estimatedManual
+        ? `   Fees: estimate ${r.totalFeeEarnedSol.toFixed(4)} SOL`
+        : `   Fees: ${r.totalFeeEarnedSol.toFixed(4)} SOL`,
+      ...(estimatedManual ? ["   Source: Manual close (cached estimate)"] : []),
       `   ${date}`,
     );
   }

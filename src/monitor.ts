@@ -159,6 +159,7 @@ export async function startMonitor(): Promise<void> {
         dryRun: CONFIG.dryRun,
         rsiThreshold: CONFIG.rsiThreshold,
         pollIntervalMs: CONFIG.pollIntervalMs,
+        exitCooldownMs: CONFIG.exitCooldownMs,
       }),
     "agent start"
   );
@@ -169,6 +170,7 @@ export async function startMonitor(): Promise<void> {
     rsiPeriod: CONFIG.rsiPeriod,
     rsiThreshold: CONFIG.rsiThreshold,
     bbPeriod: CONFIG.bbPeriod,
+    exitCooldownMs: CONFIG.exitCooldownMs,
   });
 
   // Main loop
@@ -409,6 +411,23 @@ export async function startMonitor(): Promise<void> {
             log("WARN", `Insufficient data for position ${posKey.slice(0, 8)}...`, {
               candlesCount: candles.length,
               price: snapshot.price.toFixed(8),
+            });
+            continue;
+          }
+
+          const createdAt = positionCreatedAt.get(posKey) ?? Date.now();
+          const positionAgeMs = Date.now() - createdAt;
+          const cooldownPassed = positionAgeMs >= CONFIG.exitCooldownMs;
+
+          if (snapshot.shouldExit && !cooldownPassed) {
+            log("INFO", "Exit signal ignored during cooldown", {
+              positionAddress: posKey,
+              ageSeconds: Math.floor(positionAgeMs / 1000),
+              cooldownSeconds: Math.floor(CONFIG.exitCooldownMs / 1000),
+              rsi: snapshot.rsi.toFixed(2),
+              price: snapshot.price.toFixed(8),
+              bbExitBand: CONFIG.bbExitBand,
+              bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
             });
             continue;
           }

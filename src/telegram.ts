@@ -21,6 +21,16 @@ const LOCK_FILE = "/tmp/dlmm-exit-agent-menu.lock";
 const OFFSET_FILE = "/tmp/dlmm-exit-agent-offset.txt";
 let enabled = false;
 
+function parseAmount(value: string): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatAmount(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0";
+  return value.toFixed(9).replace(/\.?0+$/, "");
+}
+
 export function initTelegram(): void {
   if (CONFIG.telegramBotToken && CONFIG.telegramChatId) {
     enabled = true;
@@ -109,6 +119,7 @@ export async function notifyAgentStart(params: {
   dryRun: boolean;
   rsiThreshold: number;
   pollIntervalMs: number;
+  exitCooldownMs: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -118,6 +129,7 @@ export async function notifyAgentStart(params: {
     `Mode: ${params.dryRun ? "🔍 DRY RUN" : "🔴 LIVE"}`,
     `RSI threshold: ${params.rsiThreshold}`,
     `Poll interval: ${(params.pollIntervalMs / 1000).toFixed(0)}s`,
+    `Exit cooldown: ${(params.exitCooldownMs / 60_000).toFixed(0)} min`,
   ].join("\n");
   await sendMessage(msg);
 }
@@ -273,6 +285,17 @@ export async function notifyExitSuccess(params: {
   }
   if (params.swapResult && !params.dryRun) {
     if (params.swapResult.success) {
+      const dlmmSolReceived =
+        (params.tokenXSymbol.toUpperCase() === "SOL" ? parseAmount(params.receivedX) : 0) +
+        (params.tokenYSymbol.toUpperCase() === "SOL" ? parseAmount(params.receivedY) : 0);
+      const finalSolReceived = dlmmSolReceived + parseAmount(params.swapResult.outputAmount);
+
+      lines.push(
+        "",
+        "<b>Final Received</b>",
+        `SOL: ${formatAmount(finalSolReceived)}`,
+      );
+
       lines.push(
         "",
         "<b>🔄 Auto-Swap</b>",
