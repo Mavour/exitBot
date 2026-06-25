@@ -12,6 +12,9 @@ export interface ManualCloseSnapshot {
   tokenYSymbol: string;
   pnlPercent: number;
   pnlSol: number;
+  peakPnlSol?: number;
+  peakPnlPercent?: number;
+  peakPnlAt?: string;
   totalFeeEarnedSol: number;
   depositValueSol: number;
 }
@@ -52,6 +55,9 @@ export function createManualCloseSnapshot(
     tokenYSymbol: position.tokenYSymbol,
     pnlPercent: pnl.pnlPercent,
     pnlSol: pnl.pnlSol,
+    peakPnlSol: pnl.pnlSol,
+    peakPnlPercent: pnl.pnlPercent,
+    peakPnlAt: new Date().toISOString(),
     totalFeeEarnedSol: pnl.totalFeeEarnedSol,
     depositValueSol: pnl.depositValueSol,
   };
@@ -76,6 +82,15 @@ export function saveActivePositionSnapshots(positions: ActivePosition[]): void {
     }
     for (const position of positions) {
       const snapshot = createManualCloseSnapshot(position);
+      const existing = byPosition.get(snapshot.positionAddress);
+      if (
+        existing?.peakPnlSol !== undefined &&
+        existing.peakPnlSol > (snapshot.peakPnlSol ?? Number.NEGATIVE_INFINITY)
+      ) {
+        snapshot.peakPnlSol = existing.peakPnlSol;
+        snapshot.peakPnlPercent = existing.peakPnlPercent;
+        snapshot.peakPnlAt = existing.peakPnlAt;
+      }
       byPosition.set(snapshot.positionAddress, snapshot);
     }
     fs.writeFileSync(
@@ -106,6 +121,9 @@ export function snapshotToManualExitRecord(
     receivedY: "0",
     pnlPercent: snapshot.pnlPercent,
     pnlSol: snapshot.pnlSol,
+    peakPnlSol: snapshot.peakPnlSol,
+    peakPnlPercent: snapshot.peakPnlPercent,
+    peakPnlAt: snapshot.peakPnlAt,
     totalFeeEarnedSol: snapshot.totalFeeEarnedSol,
     depositValueSol: snapshot.depositValueSol,
     dryRun: false,

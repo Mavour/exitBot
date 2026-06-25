@@ -65,6 +65,7 @@ const oorLeftLastNotified = new Map<string, number>();
 const wasOOR = new Set<string>();
 const lastIndicatorData = new Map<string, { price: number; rsi: number; bb: BollingerBand }>();
 const positionCreatedAt = new Map<string, number>();
+const positionPeakPnl = new Map<string, { pnlSol: number; pnlPercent: number; timestamp: string }>();
 
 async function isPositionClosedOnChain(positionAddress: string): Promise<boolean> {
   const accountInfo = await withRpcFallback(conn =>
@@ -123,6 +124,27 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function updatePeakPnl(position: ActivePosition): void {
+  if (!position.pnl) return;
+
+  const key = position.positionPubkey.toBase58();
+  const current = positionPeakPnl.get(key);
+  if (!current || position.pnl.pnlSol > current.pnlSol) {
+    const peak = {
+      pnlSol: position.pnl.pnlSol,
+      pnlPercent: position.pnl.pnlPercent,
+      timestamp: new Date().toISOString(),
+    };
+    positionPeakPnl.set(key, peak);
+    log("INFO", "Position PNL peak updated", {
+      positionAddress: key,
+      peakPnlSol: peak.pnlSol,
+      peakPnlPercent: peak.pnlPercent,
+      peakPnlAt: peak.timestamp,
+    });
+  }
+}
+
 export async function startMonitor(): Promise<void> {
   process.on("SIGINT", handleShutdown);
   process.on("SIGTERM", handleShutdown);
@@ -149,6 +171,7 @@ export async function startMonitor(): Promise<void> {
     if (!positionCreatedAt.has(key)) {
       positionCreatedAt.set(key, Date.now());
     }
+    updatePeakPnl(p);
     return { position: p, state: "MONITORING" as PositionState };
   });
 
@@ -193,6 +216,7 @@ export async function startMonitor(): Promise<void> {
         await recordClosedSnapshots(freshPositions);
 
         for (const pos of freshPositions) {
+          updatePeakPnl(pos);
           const existing = trackedPositions.find(
             (t) =>
               t.position.positionPubkey.toBase58() ===
@@ -300,6 +324,8 @@ export async function startMonitor(): Promise<void> {
             bb: snapshot.bb,
           });
 
+          const peakPnl = positionPeakPnl.get(posKey);
+
           log("INFO", `Position ${posKey.slice(0, 8)}...`, {
             rsi: snapshot.rsi.toFixed(2),
             bbUpper: snapshot.bb.upper.toFixed(8),
@@ -311,6 +337,11 @@ export async function startMonitor(): Promise<void> {
             shouldExit: snapshot.shouldExit,
             isOORRight: pos.isOORRight,
             isOORLeft: pos.isOORLeft,
+            currentPnlSol: pos.pnl?.pnlSol ?? null,
+            currentPnlPercent: pos.pnl?.pnlPercent ?? null,
+            peakPnlSol: peakPnl?.pnlSol ?? null,
+            peakPnlPercent: peakPnl?.pnlPercent ?? null,
+            peakPnlAt: peakPnl?.timestamp ?? null,
           });
 
           const hourMs = 60 * 60 * 1000;
@@ -428,6 +459,11 @@ export async function startMonitor(): Promise<void> {
               price: snapshot.price.toFixed(8),
               bbExitBand: CONFIG.bbExitBand,
               bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
+              currentPnlSol: pos.pnl?.pnlSol ?? null,
+              currentPnlPercent: pos.pnl?.pnlPercent ?? null,
+              peakPnlSol: peakPnl?.pnlSol ?? null,
+              peakPnlPercent: peakPnl?.pnlPercent ?? null,
+              peakPnlAt: peakPnl?.timestamp ?? null,
             });
             continue;
           }
@@ -441,6 +477,11 @@ export async function startMonitor(): Promise<void> {
               bbExitBand: CONFIG.bbExitBand,
               bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
               poolAddress: pos.poolAddress.toBase58(),
+              currentPnlSol: pos.pnl?.pnlSol ?? null,
+              currentPnlPercent: pos.pnl?.pnlPercent ?? null,
+              peakPnlSol: peakPnl?.pnlSol ?? null,
+              peakPnlPercent: peakPnl?.pnlPercent ?? null,
+              peakPnlAt: peakPnl?.timestamp ?? null,
             });
             safeNotify(
               () =>
@@ -473,7 +514,15 @@ export async function startMonitor(): Promise<void> {
         inFlightSet.add(posKey);
 
         tracked.state = "EXITING";
-        log("EXIT", "Executing exit", { positionAddress: posKey });
+        const peakPnl = positionPeakPnl.get(posKey);
+        log("EXIT", "Executing exit", {
+          positionAddress: posKey,
+          currentPnlSol: pos.pnl?.pnlSol ?? null,
+          currentPnlPercent: pos.pnl?.pnlPercent ?? null,
+          peakPnlSol: peakPnl?.pnlSol ?? null,
+          peakPnlPercent: peakPnl?.pnlPercent ?? null,
+          peakPnlAt: peakPnl?.timestamp ?? null,
+        });
 
         try {
           const result: ExitResult = await executeFullExit(
@@ -492,6 +541,9 @@ export async function startMonitor(): Promise<void> {
               txCount: result.txSignatures.length,
               swapSuccess: result.swapResult?.success ?? null,
               swapReason: result.swapError ?? null,
+              peakPnlSol: peakPnl?.pnlSol ?? null,
+              peakPnlPercent: peakPnl?.pnlPercent ?? null,
+              peakPnlAt: peakPnl?.timestamp ?? null,
             });
             safeNotify(
               () =>
@@ -525,6 +577,9 @@ export async function startMonitor(): Promise<void> {
                   receivedY: result.receivedY,
                   pnlPercent: pos.pnl.pnlPercent,
                   pnlSol: pos.pnl.pnlSol,
+                  peakPnlSol: peakPnl?.pnlSol,
+                  peakPnlPercent: peakPnl?.pnlPercent,
+                  peakPnlAt: peakPnl?.timestamp,
                   totalFeeEarnedSol: pos.pnl.totalFeeEarnedSol,
                   depositValueSol: pos.pnl.depositValueSol,
                   dryRun: result.dryRun,
@@ -540,6 +595,11 @@ export async function startMonitor(): Promise<void> {
             log("WARN", "Exit failed, reverting to MONITORING", {
               positionAddress: posKey,
               error: result.error,
+              currentPnlSol: pos.pnl?.pnlSol ?? null,
+              currentPnlPercent: pos.pnl?.pnlPercent ?? null,
+              peakPnlSol: peakPnl?.pnlSol ?? null,
+              peakPnlPercent: peakPnl?.pnlPercent ?? null,
+              peakPnlAt: peakPnl?.timestamp ?? null,
             });
             safeNotify(
               () =>
@@ -562,6 +622,9 @@ export async function startMonitor(): Promise<void> {
             "exit failed (exception)"
           );
         } finally {
+          if (tracked.state === "EXITED") {
+            positionPeakPnl.delete(posKey);
+          }
           inFlightSet.delete(posKey);
         }
       }

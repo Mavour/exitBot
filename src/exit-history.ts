@@ -13,6 +13,9 @@ export interface ExitRecord {
   receivedY: string;
   pnlPercent: number;
   pnlSol: number;
+  peakPnlSol?: number;
+  peakPnlPercent?: number;
+  peakPnlAt?: string;
   totalFeeEarnedSol: number;
   depositValueSol: number;
   dryRun: boolean;

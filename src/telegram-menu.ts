@@ -605,6 +605,8 @@ function formatRecapLines(history: ExitRecord[], page: number): string[] {
     const num = start + i + 1;
     const pnlSign = r.pnlSol >= 0 ? "🟢 +" : "🔴 ";
     const pnlPctSign = r.pnlPercent >= 0 ? "+" : "";
+    const peakPnlSign = (r.peakPnlSol ?? 0) >= 0 ? "🟢 +" : "🔴 ";
+    const peakPnlPctSign = (r.peakPnlPercent ?? 0) >= 0 ? "+" : "";
     const date = r.timestamp.slice(0, 16).replace("T", " ");
     const estimatedManual = isEstimatedManualRecord(r);
     lines.push(
@@ -615,6 +617,11 @@ function formatRecapLines(history: ExitRecord[], page: number): string[] {
       estimatedManual
         ? `   Fees: estimate ${r.totalFeeEarnedSol.toFixed(4)} SOL`
         : `   Fees: ${r.totalFeeEarnedSol.toFixed(4)} SOL`,
+      ...(r.peakPnlSol !== undefined
+        ? [
+            `   Peak: ${peakPnlSign}${r.peakPnlSol.toFixed(4)} SOL (${peakPnlPctSign}${(r.peakPnlPercent ?? 0).toFixed(2)}%)`,
+          ]
+        : []),
       ...(estimatedManual ? ["   Source: Manual close (cached estimate)"] : []),
       `   ${date}`,
     );
