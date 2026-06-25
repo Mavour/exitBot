@@ -53,7 +53,6 @@ export async function setupBotCommands(): Promise<void> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           commands: [
-            { command: "config", description: "⚙️ Bot Configuration" },
             { command: "menu", description: "⚙️ Bot Configuration" },
             { command: "positions", description: "📍 Active Positions" },
             { command: "recap", description: "📋 Exit History Recap" },
@@ -384,7 +383,7 @@ async function handleUpdate(update: any): Promise<void> {
     return;
   }
 
-  if (text === "/menu" || text === "/config") {
+  if (text === "/menu") {
     await handleMenuCommand(chatId);
   } else if (text === "/status") {
     await handleStatusCommand(chatId);
