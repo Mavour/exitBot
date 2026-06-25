@@ -120,6 +120,8 @@ export async function notifyAgentStart(params: {
   rsiThreshold: number;
   pollIntervalMs: number;
   exitCooldownMs: number;
+  trailingArmPercent: number;
+  trailingDropPercent: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -130,6 +132,7 @@ export async function notifyAgentStart(params: {
     `RSI threshold: ${params.rsiThreshold}`,
     `Poll interval: ${(params.pollIntervalMs / 1000).toFixed(0)}s`,
     `Exit cooldown: ${(params.exitCooldownMs / 60_000).toFixed(0)} min`,
+    `Trailing: arm ${params.trailingArmPercent}% / drop ${params.trailingDropPercent}%`,
   ].join("\n");
   await sendMessage(msg);
 }
@@ -225,8 +228,10 @@ export async function notifyExitTriggered(params: {
   price: number;
   bbExitBand: "upper" | "middle" | "lower";
   bbExitPrice: number;
-  trigger: "RSI_BB";
+  trigger: "RSI_BB" | "TRAILING_PROFIT";
   pnl: PNLData | null;
+  peakPnlPercent?: number;
+  trailingDropPercent?: number;
 }): Promise<void> {
   if (!enabled) return;
   const lines: string[] = [
@@ -234,11 +239,17 @@ export async function notifyExitTriggered(params: {
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
     `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>Trigger:</b> 📊 RSI+BB Signal`,
+    `<b>Trigger:</b> ${params.trigger === "TRAILING_PROFIT" ? "Trailing Profit" : "📊 RSI+BB Signal"}`,
     `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
     `<b>Price:</b> ${params.price}`,
     `<b>BB ${params.bbExitBand}:</b> ${params.bbExitPrice}`,
   ];
+  if (params.trigger === "TRAILING_PROFIT") {
+    lines.push(
+      `<b>Peak PNL:</b> ${(params.peakPnlPercent ?? 0).toFixed(4)}%`,
+      `<b>Trailing drop:</b> ${(params.trailingDropPercent ?? 0).toFixed(4)}%`,
+    );
+  }
   if (params.pnl) {
     const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
     const prefix = params.pnl.pnlSol >= 0 ? "+" : "";

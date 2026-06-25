@@ -87,6 +87,22 @@ const PARAMS: Record<string, ParamConfig> = {
     errorMsg: "Must be integer between 0-60 minutes",
     restartRequired: true,
   },
+  trailingArm: {
+    envKey: "TRAILING_ARM_PERCENT",
+    label: "Trailing Arm",
+    unit: "%",
+    validate: (v) => +v >= 0 && +v <= 100,
+    errorMsg: "Must be between 0-100%",
+    restartRequired: true,
+  },
+  trailingDrop: {
+    envKey: "TRAILING_DROP_PERCENT",
+    label: "Trailing Drop",
+    unit: "%",
+    validate: (v) => +v >= 0.1 && +v <= 50,
+    errorMsg: "Must be between 0.1%-50%",
+    restartRequired: true,
+  },
   slippage: {
     envKey: "SLIPPAGE_BPS",
     label: "Slippage",
@@ -152,6 +168,10 @@ function getCurrentValue(paramKey: string): string {
       return String(CONFIG.pollIntervalMs / 1000);
     case "exitCooldown":
       return String(CONFIG.exitCooldownMs / 60_000);
+    case "trailingArm":
+      return String(CONFIG.trailingArmPercent);
+    case "trailingDrop":
+      return String(CONFIG.trailingDropPercent);
     case "slippage":
       return String(CONFIG.slippageBps / 100);
     case "dryRun":
@@ -304,6 +324,16 @@ function buildMainMenuKeyboard() {
   ]);
   rows.push([
     {
+      text: `Trailing Arm: ${getCurrentValue("trailingArm")}%`,
+      callback_data: "param_trailingArm",
+    },
+    {
+      text: `Trailing Drop: ${getCurrentValue("trailingDrop")}%`,
+      callback_data: "param_trailingDrop",
+    },
+  ]);
+  rows.push([
+    {
       text: `💧 Slippage: ${getCurrentValue("slippage")}%`,
       callback_data: "param_slippage",
     },
@@ -344,6 +374,7 @@ export async function handleStatusCommand(chatId: number): Promise<void> {
     `BB: period=${getCurrentValue("bbPeriod")}, stddev=${getCurrentValue("bbStdDev")}σ, exit=${getCurrentValue("bbExitBand")}`,
     `Poll: ${getCurrentValue("pollInterval")}s`,
     `Exit cooldown: ${getCurrentValue("exitCooldown")} min`,
+    `Trailing: arm=${getCurrentValue("trailingArm")}%, drop=${getCurrentValue("trailingDrop")}%`,
     `Slippage: ${getCurrentValue("slippage")}%`,
   ].join("\n");
   await sendTelegramMessage(msg, String(chatId));
@@ -622,6 +653,7 @@ function formatRecapLines(history: ExitRecord[], page: number): string[] {
             `   Peak: ${peakPnlSign}${r.peakPnlSol.toFixed(4)} SOL (${peakPnlPctSign}${(r.peakPnlPercent ?? 0).toFixed(2)}%)`,
           ]
         : []),
+      ...(r.triggerType ? [`   Trigger: ${r.triggerType}`] : []),
       ...(estimatedManual ? ["   Source: Manual close (cached estimate)"] : []),
       `   ${date}`,
     );

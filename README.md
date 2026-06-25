@@ -178,6 +178,8 @@ Agent ngecek tiap 60 detik. Untuk setiap posisi DLMM aktif di dompet kamu:
 | `DRY_RUN` | true | ❌ | `true` = simulasi aja, `false` = beneran exit |
 | `RSI_PERIOD` | 2 | ❌ | Period RSI |
 | `RSI_THRESHOLD` | 90 | ❌ | Ambang batas RSI buat exit |
+| `TRAILING_ARM_PERCENT` | 5 | ❌ | PNL minimal untuk mengaktifkan trailing profit |
+| `TRAILING_DROP_PERCENT` | 1.5 | ❌ | Penurunan PNL dari peak yang memicu trailing exit |
 | `BB_PERIOD` | 20 | ❌ | Period Bollinger Band |
 | `BB_STD_DEV` | 2 | ❌ | Standar deviasi BB |
 | `PRIORITY_FEE_MICROLAMPORTS` | 100000 | ❌ | Priority fee Solana |

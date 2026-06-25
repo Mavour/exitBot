@@ -69,6 +69,8 @@ export const CONFIG = {
   bbPeriod: parseNumber("BB_PERIOD", 20, 2),
   bbStdDev: parseNumber("BB_STD_DEV", 2, 0.1),
   bbExitBand: parseBBExitBand("BB_EXIT_BAND", "upper"),
+  trailingArmPercent: parseNumber("TRAILING_ARM_PERCENT", 5, 0),
+  trailingDropPercent: parseNumber("TRAILING_DROP_PERCENT", 1.5, 0),
   priorityFeeMicrolamports: parseNumber(
     "PRIORITY_FEE_MICROLAMPORTS",
     0,

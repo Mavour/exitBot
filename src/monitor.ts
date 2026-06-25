@@ -35,6 +35,7 @@ const REQUIRED_CANDLES = 60;
 const POSITION_REFETCH_INTERVAL = 10;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
+type ExitTriggerType = "RSI_BB" | "TRAILING_PROFIT";
 
 function safeNotify(fn: () => Promise<void>, label: string): void {
   fn().catch((err) => logError(`${label} notify failed`, err));
@@ -43,6 +44,7 @@ function safeNotify(fn: () => Promise<void>, label: string): void {
 interface TrackedPosition {
   position: ActivePosition;
   state: PositionState;
+  exitTriggerType?: ExitTriggerType;
 }
 
 export interface PositionSnapshot {
@@ -183,6 +185,8 @@ export async function startMonitor(): Promise<void> {
         rsiThreshold: CONFIG.rsiThreshold,
         pollIntervalMs: CONFIG.pollIntervalMs,
         exitCooldownMs: CONFIG.exitCooldownMs,
+        trailingArmPercent: CONFIG.trailingArmPercent,
+        trailingDropPercent: CONFIG.trailingDropPercent,
       }),
     "agent start"
   );
@@ -194,6 +198,8 @@ export async function startMonitor(): Promise<void> {
     rsiThreshold: CONFIG.rsiThreshold,
     bbPeriod: CONFIG.bbPeriod,
     exitCooldownMs: CONFIG.exitCooldownMs,
+    trailingArmPercent: CONFIG.trailingArmPercent,
+    trailingDropPercent: CONFIG.trailingDropPercent,
   });
 
   // Main loop
@@ -449,10 +455,27 @@ export async function startMonitor(): Promise<void> {
           const createdAt = positionCreatedAt.get(posKey) ?? Date.now();
           const positionAgeMs = Date.now() - createdAt;
           const cooldownPassed = positionAgeMs >= CONFIG.exitCooldownMs;
+          const trailingArmed =
+            peakPnl !== undefined &&
+            peakPnl.pnlPercent >= CONFIG.trailingArmPercent;
+          const trailingDropPercent =
+            trailingArmed && pos.pnl
+              ? peakPnl.pnlPercent - pos.pnl.pnlPercent
+              : 0;
+          const shouldTrailingExit =
+            trailingArmed &&
+            pos.pnl !== null &&
+            trailingDropPercent >= CONFIG.trailingDropPercent;
+          const exitTrigger = shouldTrailingExit
+            ? "TRAILING_PROFIT"
+            : snapshot.shouldExit
+              ? "RSI_BB"
+              : null;
 
-          if (snapshot.shouldExit && !cooldownPassed) {
+          if (exitTrigger && !cooldownPassed) {
             log("INFO", "Exit signal ignored during cooldown", {
               positionAddress: posKey,
+              triggerType: exitTrigger,
               ageSeconds: Math.floor(positionAgeMs / 1000),
               cooldownSeconds: Math.floor(CONFIG.exitCooldownMs / 1000),
               rsi: snapshot.rsi.toFixed(2),
@@ -464,13 +487,18 @@ export async function startMonitor(): Promise<void> {
               peakPnlSol: peakPnl?.pnlSol ?? null,
               peakPnlPercent: peakPnl?.pnlPercent ?? null,
               peakPnlAt: peakPnl?.timestamp ?? null,
+              trailingArmed,
+              trailingDropPercent,
+              trailingArmPercent: CONFIG.trailingArmPercent,
+              trailingDropThreshold: CONFIG.trailingDropPercent,
             });
             continue;
           }
 
-          if (snapshot.shouldExit) {
+          if (exitTrigger) {
             log("EXIT", "EXIT CONDITIONS MET", {
               positionAddress: posKey,
+              triggerType: exitTrigger,
               rsi: snapshot.rsi.toFixed(2),
               price: snapshot.price.toFixed(8),
               bbUpper: snapshot.bb.upper.toFixed(8),
@@ -482,6 +510,10 @@ export async function startMonitor(): Promise<void> {
               peakPnlSol: peakPnl?.pnlSol ?? null,
               peakPnlPercent: peakPnl?.pnlPercent ?? null,
               peakPnlAt: peakPnl?.timestamp ?? null,
+              trailingArmed,
+              trailingDropPercent,
+              trailingArmPercent: CONFIG.trailingArmPercent,
+              trailingDropThreshold: CONFIG.trailingDropPercent,
             });
             safeNotify(
               () =>
@@ -492,11 +524,14 @@ export async function startMonitor(): Promise<void> {
                   price: snapshot.price,
                   bbExitBand: CONFIG.bbExitBand,
                   bbExitPrice: snapshot.bb[CONFIG.bbExitBand],
-                  trigger: "RSI_BB",
+                  trigger: exitTrigger,
                   pnl: pos.pnl,
+                  peakPnlPercent: peakPnl?.pnlPercent,
+                  trailingDropPercent,
                 }),
               "exit triggered"
             );
+            tracked.exitTriggerType = exitTrigger;
             tracked.state = "EXIT_TRIGGERED";
           }
         } catch (err) {
@@ -515,8 +550,10 @@ export async function startMonitor(): Promise<void> {
 
         tracked.state = "EXITING";
         const peakPnl = positionPeakPnl.get(posKey);
+        const exitTriggerType = tracked.exitTriggerType ?? "RSI_BB";
         log("EXIT", "Executing exit", {
           positionAddress: posKey,
+          triggerType: exitTriggerType,
           currentPnlSol: pos.pnl?.pnlSol ?? null,
           currentPnlPercent: pos.pnl?.pnlPercent ?? null,
           peakPnlSol: peakPnl?.pnlSol ?? null,
@@ -539,6 +576,7 @@ export async function startMonitor(): Promise<void> {
               receivedX: result.receivedX,
               receivedY: result.receivedY,
               txCount: result.txSignatures.length,
+              triggerType: exitTriggerType,
               swapSuccess: result.swapResult?.success ?? null,
               swapReason: result.swapError ?? null,
               peakPnlSol: peakPnl?.pnlSol ?? null,
@@ -569,6 +607,7 @@ export async function startMonitor(): Promise<void> {
                 saveExitRecord({
                   timestamp: new Date().toISOString(),
                   exitSource: "BOT",
+                  triggerType: exitTriggerType,
                   positionAddress: posKey,
                   poolAddress: pos.poolAddress.toBase58(),
                   tokenXSymbol: pos.tokenXSymbol,
@@ -592,8 +631,10 @@ export async function startMonitor(): Promise<void> {
             }
           } else {
             tracked.state = "MONITORING";
+            tracked.exitTriggerType = undefined;
             log("WARN", "Exit failed, reverting to MONITORING", {
               positionAddress: posKey,
+              triggerType: exitTriggerType,
               error: result.error,
               currentPnlSol: pos.pnl?.pnlSol ?? null,
               currentPnlPercent: pos.pnl?.pnlPercent ?? null,
@@ -612,6 +653,7 @@ export async function startMonitor(): Promise<void> {
           }
         } catch (err) {
           tracked.state = "MONITORING";
+          tracked.exitTriggerType = undefined;
           logError(`Unexpected error during exit of ${posKey}`, err);
           safeNotify(
             () =>

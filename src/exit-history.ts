@@ -5,6 +5,7 @@ import { log } from "./logger";
 export interface ExitRecord {
   timestamp: string;
   exitSource?: "BOT" | "MANUAL";
+  triggerType?: "RSI_BB" | "TRAILING_PROFIT" | "MANUAL";
   positionAddress: string;
   poolAddress: string;
   tokenXSymbol: string;
