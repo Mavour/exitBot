@@ -119,6 +119,7 @@ export async function notifyAgentStart(params: {
   rsiThreshold: number;
   pollIntervalMs: number;
   exitCooldownMs: number;
+  indicatorExitMinPnlPercent: number;
   trailingArmPercent: number;
   trailingDropPercent: number;
 }): Promise<void> {
@@ -131,6 +132,7 @@ export async function notifyAgentStart(params: {
     `RSI threshold: ${params.rsiThreshold}`,
     `Poll interval: ${(params.pollIntervalMs / 1000).toFixed(0)}s`,
     `Exit cooldown: ${(params.exitCooldownMs / 60_000).toFixed(0)} min`,
+    `Indicator min PNL: > ${params.indicatorExitMinPnlPercent}%`,
     `Trailing: arm ${params.trailingArmPercent}% / drop ${params.trailingDropPercent}%`,
   ].join("\n");
   await sendMessage(msg);

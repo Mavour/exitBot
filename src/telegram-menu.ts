@@ -95,6 +95,14 @@ const PARAMS: Record<string, ParamConfig> = {
     errorMsg: "Must be between 0-100%",
     restartRequired: true,
   },
+  indicatorMinPnl: {
+    envKey: "INDICATOR_EXIT_MIN_PNL_PERCENT",
+    label: "Indicator Min PNL",
+    unit: "%",
+    validate: (v) => +v >= 0 && +v <= 100,
+    errorMsg: "Must be between 0-100%",
+    restartRequired: true,
+  },
   trailingDrop: {
     envKey: "TRAILING_DROP_PERCENT",
     label: "Trailing Drop",
@@ -170,6 +178,8 @@ function getCurrentValue(paramKey: string): string {
       return String(CONFIG.exitCooldownMs / 60_000);
     case "trailingArm":
       return String(CONFIG.trailingArmPercent);
+    case "indicatorMinPnl":
+      return String(CONFIG.indicatorExitMinPnlPercent);
     case "trailingDrop":
       return String(CONFIG.trailingDropPercent);
     case "slippage":
@@ -328,6 +338,12 @@ function buildMainMenuKeyboard() {
       callback_data: "param_trailingArm",
     },
     {
+      text: `Indicator Min PNL: ${getCurrentValue("indicatorMinPnl")}%`,
+      callback_data: "param_indicatorMinPnl",
+    },
+  ]);
+  rows.push([
+    {
       text: `Trailing Drop: ${getCurrentValue("trailingDrop")}%`,
       callback_data: "param_trailingDrop",
     },
@@ -374,6 +390,7 @@ export async function handleStatusCommand(chatId: number): Promise<void> {
     `BB: period=${getCurrentValue("bbPeriod")}, stddev=${getCurrentValue("bbStdDev")}σ, exit=${getCurrentValue("bbExitBand")}`,
     `Poll: ${getCurrentValue("pollInterval")}s`,
     `Exit cooldown: ${getCurrentValue("exitCooldown")} min`,
+    `Indicator min PNL: >${getCurrentValue("indicatorMinPnl")}%`,
     `Trailing: arm=${getCurrentValue("trailingArm")}%, drop=${getCurrentValue("trailingDrop")}%`,
     `Slippage: ${getCurrentValue("slippage")}%`,
   ].join("\n");

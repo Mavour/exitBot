@@ -185,6 +185,7 @@ export async function startMonitor(): Promise<void> {
         rsiThreshold: CONFIG.rsiThreshold,
         pollIntervalMs: CONFIG.pollIntervalMs,
         exitCooldownMs: CONFIG.exitCooldownMs,
+        indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
         trailingArmPercent: CONFIG.trailingArmPercent,
         trailingDropPercent: CONFIG.trailingDropPercent,
       }),
@@ -198,6 +199,7 @@ export async function startMonitor(): Promise<void> {
     rsiThreshold: CONFIG.rsiThreshold,
     bbPeriod: CONFIG.bbPeriod,
     exitCooldownMs: CONFIG.exitCooldownMs,
+    indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
     trailingArmPercent: CONFIG.trailingArmPercent,
     trailingDropPercent: CONFIG.trailingDropPercent,
   });
@@ -466,11 +468,28 @@ export async function startMonitor(): Promise<void> {
             trailingArmed &&
             pos.pnl !== null &&
             trailingDropPercent >= CONFIG.trailingDropPercent;
+          const indicatorExitPnlOk =
+            pos.pnl !== null &&
+            pos.pnl.pnlPercent > CONFIG.indicatorExitMinPnlPercent;
+          const shouldIndicatorExit = snapshot.shouldExit && indicatorExitPnlOk;
           const exitTrigger = shouldTrailingExit
             ? "TRAILING_PROFIT"
-            : snapshot.shouldExit
+            : shouldIndicatorExit
               ? "RSI_BB"
               : null;
+
+          if (snapshot.shouldExit && !indicatorExitPnlOk) {
+            log("INFO", "Indicator exit signal ignored below minimum PNL", {
+              positionAddress: posKey,
+              rsi: snapshot.rsi.toFixed(2),
+              price: snapshot.price.toFixed(8),
+              bbExitBand: CONFIG.bbExitBand,
+              bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
+              currentPnlSol: pos.pnl?.pnlSol ?? null,
+              currentPnlPercent: pos.pnl?.pnlPercent ?? null,
+              indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
+            });
+          }
 
           if (exitTrigger && !cooldownPassed) {
             log("INFO", "Exit signal ignored during cooldown", {
@@ -491,6 +510,7 @@ export async function startMonitor(): Promise<void> {
               trailingDropPercent,
               trailingArmPercent: CONFIG.trailingArmPercent,
               trailingDropThreshold: CONFIG.trailingDropPercent,
+              indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
             });
             continue;
           }
@@ -514,6 +534,7 @@ export async function startMonitor(): Promise<void> {
               trailingDropPercent,
               trailingArmPercent: CONFIG.trailingArmPercent,
               trailingDropThreshold: CONFIG.trailingDropPercent,
+              indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
             });
             safeNotify(
               () =>
