@@ -231,23 +231,33 @@ export async function notifyExitTriggered(params: {
   bbExitPrice: number;
   trigger: "RSI_BB" | "TRAILING_PROFIT";
   pnl: PNLData | null;
+  peakPnlSol?: number;
   peakPnlPercent?: number;
   trailingDropPercent?: number;
 }): Promise<void> {
   if (!enabled) return;
+  const isTrailing = params.trigger === "TRAILING_PROFIT";
+  const triggerLabel = isTrailing ? "Trailing Profit" : "RSI+BB Indicator";
+  const reason = isTrailing
+    ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
+    : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${params.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
   const lines: string[] = [
     "<b>🚀 EXIT TRIGGERED</b>",
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
     `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>Trigger:</b> ${params.trigger === "TRAILING_PROFIT" ? "Trailing Profit" : "📊 RSI+BB Signal"}`,
+    `<b>Trigger:</b> ${triggerLabel}`,
+    `<b>Reason:</b> ${reason}`,
     `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
     `<b>Price:</b> ${params.price}`,
     `<b>BB ${params.bbExitBand}:</b> ${params.bbExitPrice}`,
   ];
-  if (params.trigger === "TRAILING_PROFIT") {
+  if (isTrailing) {
+    const peakPnlSol = params.peakPnlSol ?? 0;
+    const peakPrefix = peakPnlSol >= 0 ? "+" : "";
     lines.push(
       `<b>Peak PNL:</b> ${(params.peakPnlPercent ?? 0).toFixed(4)}%`,
+      `<b>Peak PNL SOL:</b> ${peakPrefix}${peakPnlSol.toFixed(7)} SOL`,
       `<b>Trailing drop:</b> ${(params.trailingDropPercent ?? 0).toFixed(4)}%`,
     );
   }

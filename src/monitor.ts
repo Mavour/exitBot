@@ -547,6 +547,7 @@ export async function startMonitor(): Promise<void> {
                   bbExitPrice: snapshot.bb[CONFIG.bbExitBand],
                   trigger: exitTrigger,
                   pnl: pos.pnl,
+                  peakPnlSol: peakPnl?.pnlSol,
                   peakPnlPercent: peakPnl?.pnlPercent,
                   trailingDropPercent,
                 }),

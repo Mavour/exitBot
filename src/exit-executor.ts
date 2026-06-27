@@ -8,6 +8,7 @@ import {
   VersionedTransaction,
   ComputeBudgetProgram,
   SendTransactionError,
+  LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
 import { CONFIG } from "./config";
@@ -17,6 +18,7 @@ import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
 
 const SEND_TX_TIMEOUT_MS = 30_000;
+const SOL_MINT = "So11111111111111111111111111111111111111112";
 
 export interface ExitResult {
   success: boolean;
@@ -275,6 +277,35 @@ function divDecimals(raw: string, decimals: number): string {
   return f ? `${whole}.${f}` : whole.toString();
 }
 
+function formatSolLamports(lamports: number): string {
+  if (!Number.isFinite(lamports) || lamports <= 0) return "0";
+  return (lamports / LAMPORTS_PER_SOL).toFixed(9).replace(/\.?0+$/, "");
+}
+
+async function getTransactionFeesLamports(
+  signatures: string[]
+): Promise<number> {
+  try {
+    const finality = CONFIG.commitment === "finalized" ? "finalized" : "confirmed";
+    const transactions = await Promise.all(
+      signatures.map(sig =>
+        withRpcFallback(conn =>
+          conn.getTransaction(sig, {
+            commitment: finality,
+            maxSupportedTransactionVersion: 0,
+          })
+        )
+      )
+    );
+    return transactions.reduce((sum, tx) => sum + (tx?.meta?.fee ?? 0), 0);
+  } catch (err) {
+    log("WARN", "Failed to fetch transaction fees for native SOL received", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return 0;
+  }
+}
+
 async function runPostCloseAutoSwap(params: {
   receivedTokenMint: string;
   receivedTokenSymbol: string;
@@ -401,6 +432,11 @@ export async function executeFullExit(
 
     // Step 1 — Remove liquidity (claims fees + removes liq + closes position)
     log("EXIT", "Step 1: Removing liquidity with claim and close", { dryRun });
+    const xMint = position.dlmmPool.tokenX.mint.address.toBase58();
+    const yMint = position.dlmmPool.tokenY.mint.address.toBase58();
+    const isXSolMint = xMint === SOL_MINT;
+    const isYSolMint = yMint === SOL_MINT;
+    let solBalanceBeforeRemove: number | null = null;
 
     if (dryRun) {
       log("EXIT", "DRY RUN: Would remove all liquidity (claim + close)", {
@@ -414,6 +450,12 @@ export async function executeFullExit(
       result.receivedX = divDecimals(position.totalXAmount, xDec);
       result.receivedY = divDecimals(position.totalYAmount, yDec);
     } else {
+      if (isXSolMint || isYSolMint) {
+        solBalanceBeforeRemove = await withRpcFallback(conn =>
+          conn.getBalance(wallet.publicKey, CONFIG.commitment)
+        );
+      }
+
       const removeTxs = await position.dlmmPool.removeLiquidity({
         user: wallet.publicKey,
         position: position.positionPubkey,
@@ -432,8 +474,6 @@ export async function executeFullExit(
       });
       await new Promise((r) => setTimeout(r, 5000));
 
-      const xMint = position.dlmmPool.tokenX.mint.address.toBase58();
-      const yMint = position.dlmmPool.tokenY.mint.address.toBase58();
       const actual = await getActualReceivedAmount(connection, wallet, xMint, yMint);
       if (actual) {
         result.receivedX = actual.x;
@@ -443,6 +483,28 @@ export async function executeFullExit(
         const yDec = position.dlmmPool.tokenY.mint.decimals;
         result.receivedX = divDecimals(position.totalXAmount, xDec);
         result.receivedY = divDecimals(position.totalYAmount, yDec);
+      }
+
+      if (solBalanceBeforeRemove !== null) {
+        const solBalanceAfterRemove = await withRpcFallback(conn =>
+          conn.getBalance(wallet.publicKey, CONFIG.commitment)
+        );
+        const txFeesLamports = await getTransactionFeesLamports(sigs);
+        const nativeSolReceivedLamports = Math.max(
+          solBalanceAfterRemove - solBalanceBeforeRemove + txFeesLamports,
+          0
+        );
+        const nativeSolReceived = formatSolLamports(nativeSolReceivedLamports);
+        if (isXSolMint) result.receivedX = nativeSolReceived;
+        if (isYSolMint) result.receivedY = nativeSolReceived;
+        log("EXIT", "Native SOL received from remove liquidity", {
+          solBalanceBeforeRemove,
+          solBalanceAfterRemove,
+          txFeesLamports,
+          nativeSolReceivedLamports,
+          nativeSolReceived,
+          solSide: isXSolMint ? "X" : "Y",
+        });
       }
 
       log("EXIT", "Remove liquidity confirmed", {
@@ -457,11 +519,9 @@ export async function executeFullExit(
     log("EXIT", "Step 2: Auto-swap residual tokens", { dryRun });
 
     const isXSol =
-      position.baseTokenMint ===
-      "So11111111111111111111111111111111111111112";
+      position.baseTokenMint === SOL_MINT;
     const isYSol =
-      position.quoteTokenMint ===
-      "So11111111111111111111111111111111111111112";
+      position.quoteTokenMint === SOL_MINT;
 
     let swapTokenMint: string | null = null;
     let swapTokenSymbol: string | null = null;
