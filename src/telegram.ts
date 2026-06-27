@@ -222,55 +222,6 @@ export async function notifyBackInRange(params: {
   await sendMessage(msg);
 }
 
-export async function notifyExitTriggered(params: {
-  positionAddress: string;
-  poolAddress: string;
-  rsi: number;
-  price: number;
-  bbExitBand: "upper" | "middle" | "lower";
-  bbExitPrice: number;
-  trigger: "RSI_BB" | "TRAILING_PROFIT";
-  pnl: PNLData | null;
-  peakPnlSol?: number;
-  peakPnlPercent?: number;
-  trailingDropPercent?: number;
-}): Promise<void> {
-  if (!enabled) return;
-  const isTrailing = params.trigger === "TRAILING_PROFIT";
-  const triggerLabel = isTrailing ? "Trailing Profit" : "RSI+BB Indicator";
-  const reason = isTrailing
-    ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
-    : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${params.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
-  const lines: string[] = [
-    "<b>🚀 EXIT TRIGGERED</b>",
-    "",
-    `<b>Position:</b> <code>${params.positionAddress}</code>`,
-    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>Trigger:</b> ${triggerLabel}`,
-    `<b>Reason:</b> ${reason}`,
-    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
-    `<b>Price:</b> ${params.price}`,
-    `<b>BB ${params.bbExitBand}:</b> ${params.bbExitPrice}`,
-  ];
-  if (isTrailing) {
-    const peakPnlSol = params.peakPnlSol ?? 0;
-    const peakPrefix = peakPnlSol >= 0 ? "+" : "";
-    lines.push(
-      `<b>Peak PNL:</b> ${(params.peakPnlPercent ?? 0).toFixed(4)}%`,
-      `<b>Peak PNL SOL:</b> ${peakPrefix}${peakPnlSol.toFixed(7)} SOL`,
-      `<b>Trailing drop:</b> ${(params.trailingDropPercent ?? 0).toFixed(4)}%`,
-    );
-  }
-  if (params.pnl) {
-    const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
-    const prefix = params.pnl.pnlSol >= 0 ? "+" : "";
-    lines.push(
-      `<b>PNL:</b> ${sign} ${params.pnl.pnlPercent.toFixed(4)}% (${prefix}${params.pnl.pnlSol.toFixed(7)} SOL)`,
-    );
-  }
-  await sendMessage(lines.join("\n"));
-}
-
 export async function notifyExitSuccess(params: {
   positionAddress: string;
   tokenXSymbol: string;
@@ -280,6 +231,14 @@ export async function notifyExitSuccess(params: {
   txSignatures: string[];
   dryRun: boolean;
   pnl: PNLData | null;
+  trigger?: "RSI_BB" | "TRAILING_PROFIT";
+  rsi?: number;
+  price?: number;
+  bbExitBand?: "upper" | "middle" | "lower";
+  bbExitPrice?: number;
+  peakPnlSol?: number;
+  peakPnlPercent?: number;
+  trailingDropPercent?: number;
   swapResult: SwapResult | null;
   swapError?: string;
 }): Promise<void> {
@@ -289,11 +248,42 @@ export async function notifyExitSuccess(params: {
     `<b>${label}</b>`,
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
+  ];
+
+  if (params.trigger) {
+    const isTrailing = params.trigger === "TRAILING_PROFIT";
+    const triggerLabel = isTrailing ? "Trailing Profit" : "RSI+BB Indicator";
+    const reason = isTrailing
+      ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
+      : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${params.bbExitBand ?? CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
+
+    lines.push(
+      `<b>Trigger:</b> ${triggerLabel}`,
+      `<b>Reason:</b> ${reason}`,
+    );
+    if (params.rsi !== undefined) lines.push(`<b>RSI(2):</b> ${params.rsi.toFixed(2)}`);
+    if (params.price !== undefined) lines.push(`<b>Price:</b> ${params.price}`);
+    if (params.bbExitBand && params.bbExitPrice !== undefined) {
+      lines.push(`<b>BB ${params.bbExitBand}:</b> ${params.bbExitPrice}`);
+    }
+    if (isTrailing) {
+      const peakPnlSol = params.peakPnlSol ?? 0;
+      const peakPrefix = peakPnlSol >= 0 ? "+" : "";
+      lines.push(
+        `<b>Peak PNL:</b> ${(params.peakPnlPercent ?? 0).toFixed(4)}%`,
+        `<b>Peak PNL SOL:</b> ${peakPrefix}${peakPnlSol.toFixed(7)} SOL`,
+        `<b>Trailing drop:</b> ${(params.trailingDropPercent ?? 0).toFixed(4)}%`,
+      );
+    }
+  }
+
+  lines.push(
     "",
     "<b>💰 Received</b>",
     `${params.tokenXSymbol}: ${params.receivedX}`,
     `${params.tokenYSymbol}: ${params.receivedY}`,
-  ];
+  );
+
   if (params.pnl) {
     const sign = params.pnl.pnlPercent >= 0 ? "🟢" : "🔴";
     const prefix = params.pnl.pnlSol >= 0 ? "+" : "";
@@ -346,7 +336,6 @@ export async function notifyExitSuccess(params: {
   }
   await sendMessage(lines.join("\n"));
 }
-
 export async function notifyExitFailed(params: {
   positionAddress: string;
   error: string;

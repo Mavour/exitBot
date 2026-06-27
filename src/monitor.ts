@@ -14,7 +14,6 @@ import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
 import {
   notifyAgentStart,
-  notifyExitTriggered,
   notifyExitSuccess,
   notifyExitFailed,
   notifyOORRight,
@@ -36,6 +35,18 @@ const POSITION_REFETCH_INTERVAL = 10;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
 type ExitTriggerType = "RSI_BB" | "TRAILING_PROFIT";
+type BBExitBand = "upper" | "middle" | "lower";
+
+interface ExitSignalContext {
+  triggerType: ExitTriggerType;
+  rsi: number;
+  price: number;
+  bbExitBand: BBExitBand;
+  bbExitPrice: number;
+  peakPnlSol?: number;
+  peakPnlPercent?: number;
+  trailingDropPercent?: number;
+}
 
 function safeNotify(fn: () => Promise<void>, label: string): void {
   fn().catch((err) => logError(`${label} notify failed`, err));
@@ -45,6 +56,7 @@ interface TrackedPosition {
   position: ActivePosition;
   state: PositionState;
   exitTriggerType?: ExitTriggerType;
+  exitSignal?: ExitSignalContext;
 }
 
 export interface PositionSnapshot {
@@ -536,24 +548,17 @@ export async function startMonitor(): Promise<void> {
               trailingDropThreshold: CONFIG.trailingDropPercent,
               indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
             });
-            safeNotify(
-              () =>
-                notifyExitTriggered({
-                  positionAddress: posKey,
-                  poolAddress: pos.poolAddress.toBase58(),
-                  rsi: snapshot.rsi,
-                  price: snapshot.price,
-                  bbExitBand: CONFIG.bbExitBand,
-                  bbExitPrice: snapshot.bb[CONFIG.bbExitBand],
-                  trigger: exitTrigger,
-                  pnl: pos.pnl,
-                  peakPnlSol: peakPnl?.pnlSol,
-                  peakPnlPercent: peakPnl?.pnlPercent,
-                  trailingDropPercent,
-                }),
-              "exit triggered"
-            );
             tracked.exitTriggerType = exitTrigger;
+            tracked.exitSignal = {
+              triggerType: exitTrigger,
+              rsi: snapshot.rsi,
+              price: snapshot.price,
+              bbExitBand: CONFIG.bbExitBand,
+              bbExitPrice: snapshot.bb[CONFIG.bbExitBand],
+              peakPnlSol: peakPnl?.pnlSol,
+              peakPnlPercent: peakPnl?.pnlPercent,
+              trailingDropPercent,
+            };
             tracked.state = "EXIT_TRIGGERED";
           }
         } catch (err) {
@@ -573,6 +578,7 @@ export async function startMonitor(): Promise<void> {
         tracked.state = "EXITING";
         const peakPnl = positionPeakPnl.get(posKey);
         const exitTriggerType = tracked.exitTriggerType ?? "RSI_BB";
+        const exitSignal = tracked.exitSignal;
         log("EXIT", "Executing exit", {
           positionAddress: posKey,
           triggerType: exitTriggerType,
@@ -616,6 +622,14 @@ export async function startMonitor(): Promise<void> {
                   txSignatures: result.txSignatures,
                   dryRun: result.dryRun,
                   pnl: pos.pnl,
+                  trigger: exitTriggerType,
+                  rsi: exitSignal?.rsi,
+                  price: exitSignal?.price,
+                  bbExitBand: exitSignal?.bbExitBand,
+                  bbExitPrice: exitSignal?.bbExitPrice,
+                  peakPnlSol: exitSignal?.peakPnlSol,
+                  peakPnlPercent: exitSignal?.peakPnlPercent,
+                  trailingDropPercent: exitSignal?.trailingDropPercent,
                   swapResult: result.swapResult,
                   swapError: result.swapError,
                 }),
@@ -654,6 +668,7 @@ export async function startMonitor(): Promise<void> {
           } else {
             tracked.state = "MONITORING";
             tracked.exitTriggerType = undefined;
+            tracked.exitSignal = undefined;
             log("WARN", "Exit failed, reverting to MONITORING", {
               positionAddress: posKey,
               triggerType: exitTriggerType,
@@ -676,6 +691,7 @@ export async function startMonitor(): Promise<void> {
         } catch (err) {
           tracked.state = "MONITORING";
           tracked.exitTriggerType = undefined;
+          tracked.exitSignal = undefined;
           logError(`Unexpected error during exit of ${posKey}`, err);
           safeNotify(
             () =>
