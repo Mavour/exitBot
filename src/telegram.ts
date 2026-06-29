@@ -19,6 +19,7 @@ import {
 const TELEGRAM_API = "https://api.telegram.org";
 const LOCK_FILE = "/tmp/dlmm-exit-agent-menu.lock";
 const OFFSET_FILE = "/tmp/dlmm-exit-agent-offset.txt";
+const HARD_STOP_LOSS_PNL_PERCENT = -15;
 let enabled = false;
 
 function parseAmount(value: string): number {
@@ -231,7 +232,7 @@ export async function notifyExitSuccess(params: {
   txSignatures: string[];
   dryRun: boolean;
   pnl: PNLData | null;
-  trigger?: "RSI_BB" | "TRAILING_PROFIT";
+  trigger?: "HARD_STOP_LOSS" | "RSI_BB" | "TRAILING_PROFIT";
   rsi?: number;
   price?: number;
   bbExitBand?: "upper" | "middle" | "lower";
@@ -252,10 +253,17 @@ export async function notifyExitSuccess(params: {
 
   if (params.trigger) {
     const isTrailing = params.trigger === "TRAILING_PROFIT";
-    const triggerLabel = isTrailing ? "Trailing Profit" : "RSI+BB Indicator";
-    const reason = isTrailing
-      ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
-      : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${params.bbExitBand ?? CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
+    const isHardStopLoss = params.trigger === "HARD_STOP_LOSS";
+    const triggerLabel = isHardStopLoss
+      ? "Hard Stop-Loss"
+      : isTrailing
+        ? "Trailing Profit"
+        : "RSI+BB Indicator";
+    const reason = isHardStopLoss
+      ? `PNL <= ${HARD_STOP_LOSS_PNL_PERCENT}% hard stop-loss`
+      : isTrailing
+        ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
+        : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${params.bbExitBand ?? CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
 
     lines.push(
       `<b>Trigger:</b> ${triggerLabel}`,

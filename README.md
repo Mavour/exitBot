@@ -155,7 +155,10 @@ Agent ngecek tiap 60 detik. Untuk setiap posisi DLMM aktif di dompet kamu:
 
 1. Ambil data 20 candle 15 menit terakhir dari GMGN API
 2. Hitung **RSI(2)** + **Bollinger Band(20, 2σ)**
-3. Kalau RSI ≥ 90 **DAN** harga > BB Atas → execute exit
+3. Kalau PNL <= -15% -> execute exit langsung sebagai hard stop-loss
+4. Kalau RSI >= 90 **DAN** harga > BB Atas -> execute exit
+
+Hard stop-loss ini **hardcoded di -15%**, bukan setting `.env` atau menu Telegram. Trigger ini bypass `EXIT_COOLDOWN_MINUTES` supaya posisi rugi berat langsung ditutup.
 
 **Urutan exit:**
 1. Claim semua unclaimed swap fees
@@ -174,7 +177,7 @@ Agent ngecek tiap 60 detik. Untuk setiap posisi DLMM aktif di dompet kamu:
 | `WALLET_PRIVATE_KEY` | — | ✅ | Private key dompet (base58) |
 | `GMGN_API_KEY` | — | ✅ | API key dari GMGN OpenAPI |
 | `POLL_INTERVAL_MS` | 60000 | ❌ | Interval pengecekan (ms) |
-| `EXIT_COOLDOWN_MINUTES` | 3 | ❌ | Waktu tunggu setelah posisi terdeteksi sebelum exit trigger aktif |
+| `EXIT_COOLDOWN_MINUTES` | 3 | ❌ | Waktu tunggu setelah posisi terdeteksi sebelum exit trigger non-SL aktif |
 | `DRY_RUN` | true | ❌ | `true` = simulasi aja, `false` = beneran exit |
 | `RSI_PERIOD` | 2 | ❌ | Period RSI |
 | `RSI_THRESHOLD` | 90 | ❌ | Ambang batas RSI buat exit |

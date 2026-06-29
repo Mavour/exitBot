@@ -31,10 +31,11 @@ import {
 } from "./manual-close-cache";
 
 const REQUIRED_CANDLES = 60;
-const POSITION_REFETCH_INTERVAL = 10;
+const POSITION_REFETCH_INTERVAL = 1;
+const HARD_STOP_LOSS_PNL_PERCENT = -15;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
-type ExitTriggerType = "RSI_BB" | "TRAILING_PROFIT";
+type ExitTriggerType = "HARD_STOP_LOSS" | "RSI_BB" | "TRAILING_PROFIT";
 type BBExitBand = "upper" | "middle" | "lower";
 
 interface ExitSignalContext {
@@ -480,15 +481,21 @@ export async function startMonitor(): Promise<void> {
             trailingArmed &&
             pos.pnl !== null &&
             trailingDropPercent >= CONFIG.trailingDropPercent;
+          const shouldHardStopLossExit =
+            pos.pnl !== null &&
+            pos.pnl.pnlPercent <= HARD_STOP_LOSS_PNL_PERCENT;
           const indicatorExitPnlOk =
             pos.pnl !== null &&
             pos.pnl.pnlPercent > CONFIG.indicatorExitMinPnlPercent;
           const shouldIndicatorExit = snapshot.shouldExit && indicatorExitPnlOk;
-          const exitTrigger = shouldTrailingExit
-            ? "TRAILING_PROFIT"
-            : shouldIndicatorExit
-              ? "RSI_BB"
-              : null;
+          const exitTrigger = shouldHardStopLossExit
+            ? "HARD_STOP_LOSS"
+            : shouldTrailingExit
+              ? "TRAILING_PROFIT"
+              : shouldIndicatorExit
+                ? "RSI_BB"
+                : null;
+          const exitBypassesCooldown = exitTrigger === "HARD_STOP_LOSS";
 
           if (snapshot.shouldExit && !indicatorExitPnlOk) {
             log("INFO", "Indicator exit signal ignored below minimum PNL", {
@@ -503,7 +510,7 @@ export async function startMonitor(): Promise<void> {
             });
           }
 
-          if (exitTrigger && !cooldownPassed) {
+          if (exitTrigger && !exitBypassesCooldown && !cooldownPassed) {
             log("INFO", "Exit signal ignored during cooldown", {
               positionAddress: posKey,
               triggerType: exitTrigger,
@@ -523,6 +530,7 @@ export async function startMonitor(): Promise<void> {
               trailingArmPercent: CONFIG.trailingArmPercent,
               trailingDropThreshold: CONFIG.trailingDropPercent,
               indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
+              hardStopLossPnlPercent: HARD_STOP_LOSS_PNL_PERCENT,
             });
             continue;
           }
@@ -547,6 +555,8 @@ export async function startMonitor(): Promise<void> {
               trailingArmPercent: CONFIG.trailingArmPercent,
               trailingDropThreshold: CONFIG.trailingDropPercent,
               indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
+              hardStopLossPnlPercent: HARD_STOP_LOSS_PNL_PERCENT,
+              exitBypassesCooldown,
             });
             tracked.exitTriggerType = exitTrigger;
             tracked.exitSignal = {
