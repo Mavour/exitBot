@@ -389,6 +389,17 @@ export async function startMonitor(): Promise<void> {
           });
 
           const peakPnl = positionPeakPnl.get(posKey);
+          const trailingArmed =
+            peakPnl !== undefined &&
+            peakPnl.pnlPercent >= CONFIG.trailingArmPercent;
+          const trailingDropPercent =
+            trailingArmed && pos.pnl
+              ? peakPnl.pnlPercent - pos.pnl.pnlPercent
+              : 0;
+          const shouldTrailingExit =
+            trailingArmed &&
+            pos.pnl !== null &&
+            trailingDropPercent >= CONFIG.trailingDropPercent;
 
           log("INFO", `Position ${posKey.slice(0, 8)}...`, {
             rsi: snapshot.rsi.toFixed(2),
@@ -407,6 +418,12 @@ export async function startMonitor(): Promise<void> {
             peakPnlSol: peakPnl?.pnlSol ?? null,
             peakPnlPercent: peakPnl?.pnlPercent ?? null,
             peakPnlAt: peakPnl?.timestamp ?? null,
+            trailingTp: trailingArmed ? "ON" : "OFF",
+            trailingArmed,
+            shouldTrailingExit,
+            trailingDropPercent,
+            trailingArmPercent: CONFIG.trailingArmPercent,
+            trailingDropThreshold: CONFIG.trailingDropPercent,
           });
 
           const hourMs = 60 * 60 * 1000;
@@ -514,17 +531,6 @@ export async function startMonitor(): Promise<void> {
           const createdAt = positionCreatedAt.get(posKey) ?? Date.now();
           const positionAgeMs = Date.now() - createdAt;
           const cooldownPassed = positionAgeMs >= CONFIG.exitCooldownMs;
-          const trailingArmed =
-            peakPnl !== undefined &&
-            peakPnl.pnlPercent >= CONFIG.trailingArmPercent;
-          const trailingDropPercent =
-            trailingArmed && pos.pnl
-              ? peakPnl.pnlPercent - pos.pnl.pnlPercent
-              : 0;
-          const shouldTrailingExit =
-            trailingArmed &&
-            pos.pnl !== null &&
-            trailingDropPercent >= CONFIG.trailingDropPercent;
           const shouldHardStopLossExit =
             pos.pnl !== null &&
             pos.pnl.pnlPercent <= HARD_STOP_LOSS_PNL_PERCENT;
