@@ -33,6 +33,7 @@ export interface ActivePosition {
   unclaimedFeesY: string;
   binRange: { fromBinId: number; toBinId: number };
   pnl: PNLData | null;
+  openedAtMs?: number;
 }
 
 const SOL_MINT = "So11111111111111111111111111111111111111112";
@@ -214,6 +215,12 @@ function parsePositionRowPNL(row: Record<string, any> | undefined): PNLData | nu
     pnlPercent,
     source: "meteora_position",
   };
+}
+
+function parsePositionOpenedAtMs(row: Record<string, any> | undefined): number | undefined {
+  const createdAt = firstFiniteNumber(row?.createdAt);
+  if (createdAt === null) return undefined;
+  return createdAt > 1_000_000_000_000 ? createdAt : createdAt * 1000;
 }
 
 function calculateRpcPNL({
@@ -444,6 +451,7 @@ export async function fetchAllActivePositions(
           toBinId: posInfo.upperBinId,
         },
         pnl,
+        openedAtMs: parsePositionOpenedAtMs(positionPnlRow),
       });
     }
   }

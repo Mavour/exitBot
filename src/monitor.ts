@@ -206,8 +206,10 @@ export async function startMonitor(): Promise<void> {
 
   trackedPositions = initialPositions.map((p) => {
     const key = p.positionPubkey.toBase58();
-    if (!positionCreatedAt.has(key)) {
-      positionCreatedAt.set(key, Date.now());
+    if (p.openedAtMs !== undefined) {
+      positionCreatedAt.set(key, p.openedAtMs);
+    } else if (!positionCreatedAt.has(key)) {
+      positionCreatedAt.set(key, p.openedAtMs ?? Date.now());
     }
     updatePeakPnl(p);
     return { position: p, state: "MONITORING" as PositionState };
@@ -260,6 +262,13 @@ export async function startMonitor(): Promise<void> {
         await recordClosedSnapshots(freshPositions);
 
         for (const pos of freshPositions) {
+          const key = pos.positionPubkey.toBase58();
+          if (pos.openedAtMs !== undefined) {
+            positionCreatedAt.set(key, pos.openedAtMs);
+          } else if (!positionCreatedAt.has(key)) {
+            positionCreatedAt.set(key, Date.now());
+          }
+
           updatePeakPnl(pos);
           const existing = trackedPositions.find(
             (t) =>
@@ -271,10 +280,6 @@ export async function startMonitor(): Promise<void> {
               existing.position = pos;
             }
             continue;
-          }
-          const key = pos.positionPubkey.toBase58();
-          if (!positionCreatedAt.has(key)) {
-            positionCreatedAt.set(key, Date.now());
           }
           trackedPositions.push({
             position: pos,
@@ -400,6 +405,10 @@ export async function startMonitor(): Promise<void> {
             trailingArmed &&
             pos.pnl !== null &&
             trailingDropPercent >= CONFIG.trailingDropPercent;
+          const createdAt = positionCreatedAt.get(posKey) ?? pos.openedAtMs ?? Date.now();
+          const positionAgeMs = Date.now() - createdAt;
+          const cooldownPassed = positionAgeMs >= CONFIG.exitCooldownMs;
+          const ageSource = pos.openedAtMs ? "meteora_created_at" : "agent_first_seen";
 
           log("INFO", `Position ${posKey.slice(0, 8)}...`, {
             rsi: snapshot.rsi.toFixed(2),
@@ -424,6 +433,10 @@ export async function startMonitor(): Promise<void> {
             trailingDropPercent,
             trailingArmPercent: CONFIG.trailingArmPercent,
             trailingDropThreshold: CONFIG.trailingDropPercent,
+            positionAgeSeconds: Math.floor(positionAgeMs / 1000),
+            cooldownSeconds: Math.floor(CONFIG.exitCooldownMs / 1000),
+            cooldownPassed,
+            ageSource,
           });
 
           const hourMs = 60 * 60 * 1000;
@@ -528,9 +541,6 @@ export async function startMonitor(): Promise<void> {
             continue;
           }
 
-          const createdAt = positionCreatedAt.get(posKey) ?? Date.now();
-          const positionAgeMs = Date.now() - createdAt;
-          const cooldownPassed = positionAgeMs >= CONFIG.exitCooldownMs;
           const shouldHardStopLossExit =
             pos.pnl !== null &&
             pos.pnl.pnlPercent <= HARD_STOP_LOSS_PNL_PERCENT;
@@ -565,6 +575,7 @@ export async function startMonitor(): Promise<void> {
               positionAddress: posKey,
               triggerType: exitTrigger,
               ageSeconds: Math.floor(positionAgeMs / 1000),
+              ageSource,
               cooldownSeconds: Math.floor(CONFIG.exitCooldownMs / 1000),
               rsi: snapshot.rsi.toFixed(2),
               price: snapshot.price.toFixed(8),
