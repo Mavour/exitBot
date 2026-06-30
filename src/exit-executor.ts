@@ -11,6 +11,7 @@ import {
   LAMPORTS_PER_SOL,
 } from "@solana/web3.js";
 import { BN } from "@coral-xyz/anchor";
+import DLMM from "@meteora-ag/dlmm";
 import { CONFIG } from "./config";
 import { ActivePosition } from "./position-fetcher";
 import { autoSwapAfterExit, SwapResult } from "./jupiter-swap";
@@ -138,7 +139,6 @@ async function getActualReceivedAmount(
 }
 
 async function sendWithRetry(
-  connection: Connection,
   tx: Transaction,
   wallet: Keypair
 ): Promise<string> {
@@ -178,15 +178,17 @@ async function sendWithRetry(
 
     try {
       sig = await withTimeout(
-        connection.sendTransaction(versionedTx, {
-          skipPreflight: false,
-          maxRetries: 1,
-        }),
+        withRpcFallback(conn =>
+          conn.sendTransaction(versionedTx, {
+            skipPreflight: false,
+            maxRetries: 1,
+          })
+        ),
         SEND_TX_TIMEOUT_MS,
         `sendTransaction timed out after ${SEND_TX_TIMEOUT_MS}ms`
       );
     } catch (sendErr) {
-      const detailedError = await formatSendError(connection, sendErr);
+      const detailedError = await formatSendError(await withRpcFallback(async conn => conn), sendErr);
       lastErr = new Error(detailedError);
       if (isNonRetryable(sendErr)) {
         log("ERROR", `Transaction send failed (non-retryable)`, {
@@ -256,16 +258,34 @@ async function sendWithRetry(
 }
 
 async function sendClaimTxs(
-  connection: Connection,
   txs: Transaction[],
   wallet: Keypair
 ): Promise<string[]> {
   const sigs: string[] = [];
   for (const tx of txs) {
-    const sig = await sendWithRetry(connection, tx, wallet);
+    const sig = await sendWithRetry(tx, wallet);
     sigs.push(sig);
   }
   return sigs;
+}
+
+async function buildRemoveLiquidityTxs(
+  position: ActivePosition,
+  wallet: Keypair
+): Promise<Transaction[]> {
+  return withRpcFallback(async (conn) => {
+    const dlmmPool = await DLMM.create(conn, position.poolAddress, {
+      cluster: "mainnet-beta",
+    });
+    return dlmmPool.removeLiquidity({
+      user: wallet.publicKey,
+      position: position.positionPubkey,
+      fromBinId: position.binRange.fromBinId,
+      toBinId: position.binRange.toBinId,
+      bps: new BN(10000),
+      shouldClaimAndClose: true,
+    });
+  });
 }
 
 function divDecimals(raw: string, decimals: number): string {
@@ -456,16 +476,9 @@ export async function executeFullExit(
         );
       }
 
-      const removeTxs = await position.dlmmPool.removeLiquidity({
-        user: wallet.publicKey,
-        position: position.positionPubkey,
-        fromBinId: position.binRange.fromBinId,
-        toBinId: position.binRange.toBinId,
-        bps: new BN(10000),
-        shouldClaimAndClose: true,
-      });
+      const removeTxs = await buildRemoveLiquidityTxs(position, wallet);
 
-      const sigs = await sendClaimTxs(connection, removeTxs, wallet);
+      const sigs = await sendClaimTxs(removeTxs, wallet);
       result.txSignatures.push(...sigs);
 
       // Fix C: 5-second settle wait — prevents "zero balance" race when fetching actual received
