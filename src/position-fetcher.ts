@@ -12,6 +12,7 @@ export interface PNLData {
   totalFeeEarnedSol: number;
   pnlSol: number;
   pnlPercent: number;
+  source?: "rpc" | "meteora_position" | "meteora_pool";
 }
 
 export interface ActivePosition {
@@ -93,10 +94,173 @@ function parsePNL(
 
     if (!Number.isFinite(pnlSol)) return null;
 
-    return { depositValueSol, currentValueSol, totalFeeEarnedSol, pnlSol, pnlPercent };
+    return { depositValueSol, currentValueSol, totalFeeEarnedSol, pnlSol, pnlPercent, source: "meteora_pool" };
   } catch {
     return null;
   }
+}
+
+function pnlNumber(value: unknown, fallback = 0): number {
+  const parsed = Number.parseFloat(String(value ?? ""));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function firstFiniteNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = Number.parseFloat(String(value ?? ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function calculatePnl({
+  balance,
+  withdrawals,
+  claimableFees,
+  claimedFees,
+  deposits,
+}: {
+  balance: unknown;
+  withdrawals: unknown;
+  claimableFees: unknown;
+  claimedFees: unknown;
+  deposits: unknown;
+}): { deposits: number; balance: number; claimableFees: number; claimedFees: number; pnl: number; pnlPct: number | null } {
+  const normalized = {
+    balance: pnlNumber(balance),
+    withdrawals: pnlNumber(withdrawals),
+    claimableFees: pnlNumber(claimableFees),
+    claimedFees: pnlNumber(claimedFees),
+    deposits: pnlNumber(deposits),
+  };
+  const pnl =
+    normalized.balance +
+    normalized.withdrawals +
+    normalized.claimableFees +
+    normalized.claimedFees -
+    normalized.deposits;
+
+  return {
+    ...normalized,
+    pnl,
+    pnlPct: normalized.deposits > 0 ? (pnl / normalized.deposits) * 100 : null,
+  };
+}
+
+function readPath(data: any, path: string): unknown {
+  return path.split(".").reduce((current, key) => current?.[key], data);
+}
+
+async function fetchPositionPnlRows(
+  poolAddress: string,
+  walletAddress: string
+): Promise<Map<string, Record<string, any>>> {
+  const url =
+    `https://dlmm.datapi.meteora.ag/positions/${poolAddress}/pnl` +
+    `?user=${walletAddress}&status=open&pageSize=100&page=1`;
+
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      log("WARN", "Meteora position PNL API returned non-OK", {
+        poolAddress,
+        status: res.status,
+        body: body.slice(0, 160),
+      });
+      return new Map();
+    }
+
+    const data = await res.json() as any;
+    const rows = data?.positions ?? data?.data;
+    if (!Array.isArray(rows)) return new Map();
+
+    const byPosition = new Map<string, Record<string, any>>();
+    for (const row of rows) {
+      const address = row.positionAddress ?? row.address ?? row.position;
+      if (typeof address === "string" && address) {
+        byPosition.set(address, row);
+      }
+    }
+    return byPosition;
+  } catch (err) {
+    log("WARN", "Failed to fetch Meteora position PNL rows", {
+      poolAddress,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return new Map();
+  }
+}
+
+function parsePositionRowPNL(row: Record<string, any> | undefined): PNLData | null {
+  if (!row) return null;
+
+  const pnlSol = firstFiniteNumber(row.pnlSol);
+  const pnlPercent = firstFiniteNumber(row.pnlSolPctChange, row.pnlPctChange, row.pnlPct);
+  if (pnlSol === null || pnlPercent === null) return null;
+
+  const claimedFees = pnlNumber(readPath(row, "allTimeFees.total.sol"));
+  const unclaimedFees =
+    pnlNumber(readPath(row, "unrealizedPnl.unclaimedFeeTokenX.amountSol")) +
+    pnlNumber(readPath(row, "unrealizedPnl.unclaimedFeeTokenY.amountSol")) +
+    pnlNumber(readPath(row, "unrealizedPnl.unclaimedRewardTokenX.amountSol")) +
+    pnlNumber(readPath(row, "unrealizedPnl.unclaimedRewardTokenY.amountSol"));
+
+  return {
+    depositValueSol: pnlNumber(readPath(row, "allTimeDeposits.total.sol")),
+    currentValueSol: pnlNumber(readPath(row, "unrealizedPnl.balancesSol")),
+    totalFeeEarnedSol: claimedFees + unclaimedFees,
+    pnlSol,
+    pnlPercent,
+    source: "meteora_position",
+  };
+}
+
+function calculateRpcPNL({
+  posInfo,
+  dlmmPool,
+  tokenXPriceSol,
+  costBasis,
+}: {
+  posInfo: any;
+  dlmmPool: DLMM;
+  tokenXPriceSol: number | null;
+  costBasis: Record<string, any> | undefined;
+}): PNLData | null {
+  if (!costBasis || tokenXPriceSol === null || !Number.isFinite(tokenXPriceSol)) {
+    return null;
+  }
+
+  const tokenXDecimals = dlmmPool.tokenX.mint.decimals;
+  const tokenYDecimals = dlmmPool.tokenY.mint.decimals;
+  const amountX = pnlNumber(posInfo.totalXAmount?.toString()) / (10 ** tokenXDecimals);
+  const amountY = pnlNumber(posInfo.totalYAmount?.toString()) / (10 ** tokenYDecimals);
+  const feeX = pnlNumber(posInfo.feeX?.toString()) / (10 ** tokenXDecimals);
+  const feeY = pnlNumber(posInfo.feeY?.toString()) / (10 ** tokenYDecimals);
+  const balanceSol = amountX * tokenXPriceSol + amountY;
+  const claimableSol = feeX * tokenXPriceSol + feeY;
+
+  const calculated = calculatePnl({
+    balance: balanceSol,
+    withdrawals: readPath(costBasis, "allTimeWithdrawals.total.sol"),
+    claimableFees: claimableSol,
+    claimedFees: readPath(costBasis, "allTimeFees.total.sol"),
+    deposits: readPath(costBasis, "allTimeDeposits.total.sol"),
+  });
+
+  const pnlPct = calculated.pnlPct;
+  if (!Number.isFinite(calculated.pnl) || pnlPct === null || !Number.isFinite(pnlPct)) {
+    return null;
+  }
+
+  return {
+    depositValueSol: calculated.deposits,
+    currentValueSol: calculated.balance,
+    totalFeeEarnedSol: calculated.claimedFees + calculated.claimableFees,
+    pnlSol: calculated.pnl,
+    pnlPercent: pnlPct,
+    source: "rpc",
+  };
 }
 
 export async function fetchAllActivePositions(
@@ -166,13 +330,18 @@ export async function fetchAllActivePositions(
     }
 
     let activeBinId: number | null = null;
+    let tokenXPriceSol: number | null = null;
     try {
       const activeBin = await withRpcFallback(conn => dlmmPool.getActiveBin());
       activeBinId = activeBin.binId;
+      if (pool.tokenYMint === SOL_MINT) {
+        tokenXPriceSol = Number(dlmmPool.fromPricePerLamport(Number(activeBin.price)));
+      }
     } catch (err) {
       log("WARN", `Failed to get active bin for pool ${pool.poolAddress.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
+    const positionPnlRows = await fetchPositionPnlRows(pool.poolAddress, walletAddress);
     const baseSymbol = await resolveTokenSymbol(pool.tokenXMint, pool.tokenX);
     const quoteSymbol = await resolveTokenSymbol(pool.tokenYMint, pool.tokenY);
     const poolPrice = Number(pool.poolPrice);
@@ -243,6 +412,17 @@ export async function fetchAllActivePositions(
         apiOOR,
       });
 
+      const positionPnlRow = positionPnlRows.get(posAddrStr);
+      const pnl =
+        calculateRpcPNL({
+          posInfo,
+          dlmmPool,
+          tokenXPriceSol,
+          costBasis: positionPnlRow,
+        }) ??
+        parsePositionRowPNL(positionPnlRow) ??
+        parsePNL(pool);
+
       positions.push({
         poolAddress: poolPubkey,
         positionPubkey: posPubkey,
@@ -263,7 +443,7 @@ export async function fetchAllActivePositions(
           fromBinId: posInfo.lowerBinId,
           toBinId: posInfo.upperBinId,
         },
-        pnl: parsePNL(pool),
+        pnl,
       });
     }
   }

@@ -403,6 +403,7 @@ export async function startMonitor(): Promise<void> {
             isOORLeft: pos.isOORLeft,
             currentPnlSol: pos.pnl?.pnlSol ?? null,
             currentPnlPercent: pos.pnl?.pnlPercent ?? null,
+            pnlSource: pos.pnl?.source ?? null,
             peakPnlSol: peakPnl?.pnlSol ?? null,
             peakPnlPercent: peakPnl?.pnlPercent ?? null,
             peakPnlAt: peakPnl?.timestamp ?? null,
