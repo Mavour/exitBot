@@ -226,7 +226,7 @@ export async function startMonitor(): Promise<void> {
     });
 
     // Only re-fetch positions every POSITION_REFETCH_INTERVAL cycles
-    const shouldRefetch = pollCycle % POSITION_REFETCH_INTERVAL === 1;
+    const shouldRefetch = pollCycle % POSITION_REFETCH_INTERVAL === 0;
     if (shouldRefetch) {
       log("INFO", "Re-fetching position list");
       try {
