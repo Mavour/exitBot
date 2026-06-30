@@ -144,7 +144,7 @@ function updatePeakPnl(position: ActivePosition): void {
 
   const key = position.positionPubkey.toBase58();
   const current = positionPeakPnl.get(key);
-  if (!current || position.pnl.pnlSol > current.pnlSol) {
+  if (!current || position.pnl.pnlPercent > current.pnlPercent) {
     const peak = {
       pnlSol: position.pnl.pnlSol,
       pnlPercent: position.pnl.pnlPercent,
@@ -157,6 +157,28 @@ function updatePeakPnl(position: ActivePosition): void {
       peakPnlPercent: peak.pnlPercent,
       peakPnlAt: peak.timestamp,
     });
+  }
+}
+
+function restorePeakPnlFromSnapshots(): void {
+  for (const snapshot of getManualCloseSnapshots()) {
+    if (
+      snapshot.peakPnlSol === undefined ||
+      snapshot.peakPnlPercent === undefined ||
+      !Number.isFinite(snapshot.peakPnlSol) ||
+      !Number.isFinite(snapshot.peakPnlPercent)
+    ) {
+      continue;
+    }
+
+    const current = positionPeakPnl.get(snapshot.positionAddress);
+    if (!current || snapshot.peakPnlPercent > current.pnlPercent) {
+      positionPeakPnl.set(snapshot.positionAddress, {
+        pnlSol: snapshot.peakPnlSol,
+        pnlPercent: snapshot.peakPnlPercent,
+        timestamp: snapshot.peakPnlAt ?? new Date().toISOString(),
+      });
+    }
   }
 }
 
@@ -179,6 +201,7 @@ export async function startMonitor(): Promise<void> {
     logError("Failed to fetch positions on startup", err);
   }
   saveActivePositionSnapshots(initialPositions);
+  restorePeakPnlFromSnapshots();
   await recordClosedSnapshots(initialPositions);
 
   trackedPositions = initialPositions.map((p) => {
