@@ -15,6 +15,7 @@ import { withRpcFallback } from "./rpc-manager";
 import {
   notifyAgentStart,
   notifyExitSuccess,
+  notifyExitStarted,
   notifyExitFailed,
   notifyOORRight,
   notifyOORLeft,
@@ -660,6 +661,20 @@ export async function startMonitor(): Promise<void> {
           peakPnlPercent: peakPnl?.pnlPercent ?? null,
           peakPnlAt: peakPnl?.timestamp ?? null,
         });
+        safeNotify(
+          () =>
+            notifyExitStarted({
+              positionAddress: posKey,
+              poolAddress: pos.poolAddress.toBase58(),
+              trigger: exitTriggerType,
+              pnl: pos.pnl,
+              peakPnlSol: peakPnl?.pnlSol,
+              peakPnlPercent: peakPnl?.pnlPercent,
+              trailingDropPercent: exitSignal?.trailingDropPercent,
+              dryRun: CONFIG.dryRun,
+            }),
+          "exit started"
+        );
 
         try {
           const result: ExitResult = await executeFullExit(

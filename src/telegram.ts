@@ -344,6 +344,63 @@ export async function notifyExitSuccess(params: {
   }
   await sendMessage(lines.join("\n"));
 }
+
+export async function notifyExitStarted(params: {
+  positionAddress: string;
+  poolAddress: string;
+  trigger: "HARD_STOP_LOSS" | "RSI_BB" | "TRAILING_PROFIT";
+  pnl: PNLData | null;
+  peakPnlSol?: number;
+  peakPnlPercent?: number;
+  trailingDropPercent?: number;
+  dryRun: boolean;
+}): Promise<void> {
+  if (!enabled) return;
+
+  const isTrailing = params.trigger === "TRAILING_PROFIT";
+  const isHardStopLoss = params.trigger === "HARD_STOP_LOSS";
+  const triggerLabel = isHardStopLoss
+    ? "Hard Stop-Loss"
+    : isTrailing
+      ? "Trailing Profit"
+      : "RSI+BB Indicator";
+  const reason = isHardStopLoss
+    ? `PNL <= ${HARD_STOP_LOSS_PNL_PERCENT}% hard stop-loss`
+    : isTrailing
+      ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
+      : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
+
+  const lines = [
+    `<b>${params.dryRun ? "EXIT SIMULATION STARTED" : "EXIT STARTED"}</b>`,
+    "",
+    `<b>Position:</b> <code>${params.positionAddress}</code>`,
+    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>Trigger:</b> ${triggerLabel}`,
+    `<b>Reason:</b> ${reason}`,
+  ];
+
+  if (params.pnl) {
+    const prefix = params.pnl.pnlSol >= 0 ? "+" : "";
+    lines.push(
+      "",
+      "<b>Current PNL</b>",
+      `${params.pnl.pnlPercent.toFixed(4)}% (${prefix}${params.pnl.pnlSol.toFixed(7)} SOL)`,
+    );
+  }
+
+  if (params.peakPnlPercent !== undefined || params.peakPnlSol !== undefined) {
+    const peakPrefix = (params.peakPnlSol ?? 0) >= 0 ? "+" : "";
+    lines.push(
+      "",
+      "<b>Peak PNL</b>",
+      `${(params.peakPnlPercent ?? 0).toFixed(4)}% (${peakPrefix}${(params.peakPnlSol ?? 0).toFixed(7)} SOL)`,
+    );
+  }
+
+  lines.push("", "Status: exit transaction is being built and submitted.");
+  await sendMessage(lines.join("\n"));
+}
+
 export async function notifyExitFailed(params: {
   positionAddress: string;
   error: string;
