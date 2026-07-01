@@ -32,7 +32,10 @@ import {
 } from "./manual-close-cache";
 
 const REQUIRED_CANDLES = 60;
-const POSITION_REFETCH_INTERVAL = 1;
+const POSITION_REFETCH_INTERVAL = Math.max(
+  1,
+  Math.ceil(60_000 / CONFIG.pollIntervalMs)
+);
 const HARD_STOP_LOSS_PNL_PERCENT = -15;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";

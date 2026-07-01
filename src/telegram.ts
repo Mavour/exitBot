@@ -20,6 +20,11 @@ const TELEGRAM_API = "https://api.telegram.org";
 const LOCK_FILE = "/tmp/dlmm-exit-agent-menu.lock";
 const OFFSET_FILE = "/tmp/dlmm-exit-agent-offset.txt";
 const HARD_STOP_LOSS_PNL_PERCENT = -15;
+const TELEGRAM_LONG_POLL_TIMEOUT_SECONDS = 25;
+const TELEGRAM_FETCH_TIMEOUT_MS = 35_000;
+const TELEGRAM_POLL_IDLE_DELAY_MS = 500;
+const TELEGRAM_POLL_RETRY_BASE_MS = 2_000;
+const TELEGRAM_POLL_RETRY_MAX_MS = 30_000;
 let enabled = false;
 
 function parseAmount(value: string): number {
@@ -415,9 +420,33 @@ export async function notifyExitFailed(params: {
   await sendMessage(msg);
 }
 
+function isTransientTelegramPollError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const message = error.message.toLowerCase();
+  return (
+    error.name === "AbortError" ||
+    error.name === "TimeoutError" ||
+    message.includes("timeout") ||
+    message.includes("fetch failed") ||
+    message.includes("econnreset") ||
+    message.includes("enetunreach") ||
+    message.includes("eai_again")
+  );
+}
+
+function telegramPollBackoffMs(consecutiveFailures: number): number {
+  const exponent = Math.min(consecutiveFailures - 1, 4);
+  return Math.min(
+    TELEGRAM_POLL_RETRY_BASE_MS * 2 ** exponent,
+    TELEGRAM_POLL_RETRY_MAX_MS
+  );
+}
+
 async function getUpdates(offset: number): Promise<any[]> {
-  const url = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/getUpdates?offset=${offset}&timeout=10`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+  const url = `${TELEGRAM_API}/bot${CONFIG.telegramBotToken}/getUpdates?offset=${offset}&timeout=${TELEGRAM_LONG_POLL_TIMEOUT_SECONDS}`;
+  const res = await fetch(url, {
+    signal: AbortSignal.timeout(TELEGRAM_FETCH_TIMEOUT_MS),
+  });
   if (!res.ok) {
     throw new Error(`Telegram getUpdates HTTP ${res.status}`);
   }
@@ -490,7 +519,10 @@ async function startCommandListener(): Promise<void> {
     offset = Number(fs.readFileSync(OFFSET_FILE, "utf-8"));
   } catch {}
 
+  let consecutiveFailures = 0;
+
   while (true) {
+    let delayMs = TELEGRAM_POLL_IDLE_DELAY_MS;
     try {
       const updates = await getUpdates(offset);
       for (const update of updates) {
@@ -498,9 +530,20 @@ async function startCommandListener(): Promise<void> {
         fs.writeFileSync(OFFSET_FILE, String(offset));
         await handleUpdate(update);
       }
+      consecutiveFailures = 0;
     } catch (err) {
-      logError("Telegram update poll failed", err);
+      consecutiveFailures += 1;
+      delayMs = telegramPollBackoffMs(consecutiveFailures);
+      if (isTransientTelegramPollError(err)) {
+        log("WARN", "Telegram update poll transient failure", {
+          error: err instanceof Error ? err.message : String(err),
+          consecutiveFailures,
+          retryInMs: delayMs,
+        });
+      } else {
+        logError("Telegram update poll failed", err);
+      }
     }
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, delayMs));
   }
 }
