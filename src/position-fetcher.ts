@@ -316,36 +316,40 @@ export async function fetchAllActivePositions(
 
     const poolPubkey = new PublicKey(pool.poolAddress);
 
-    let dlmmPool: DLMM;
+    let poolContext: {
+      dlmmPool: DLMM;
+      positionsByUser: Awaited<ReturnType<DLMM["getPositionsByUserAndLbPair"]>>;
+      activeBin: Awaited<ReturnType<DLMM["getActiveBin"]>> | null;
+    };
     try {
-      dlmmPool = await withRpcFallback(conn =>
-        DLMM.create(conn, poolPubkey, { cluster: "mainnet-beta" })
-      );
-    } catch (err) {
-      logError(`Failed to create DLMM instance for pool ${pool.poolAddress}`, err);
-      continue;
-    }
+      poolContext = await withRpcFallback(async (conn) => {
+        const dlmmPool = await DLMM.create(conn, poolPubkey, {
+          cluster: "mainnet-beta",
+        });
+        const positionsByUser = await dlmmPool.getPositionsByUserAndLbPair(wallet);
+        let activeBin: Awaited<ReturnType<DLMM["getActiveBin"]>> | null = null;
 
-    let positionsByUser;
-    try {
-      positionsByUser = await withRpcFallback(conn =>
-        dlmmPool.getPositionsByUserAndLbPair(wallet)
-      );
+        try {
+          activeBin = await dlmmPool.getActiveBin();
+        } catch (err) {
+          log("WARN", `Failed to get active bin for pool ${pool.poolAddress.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        return { dlmmPool, positionsByUser, activeBin };
+      });
     } catch (err) {
       logError(`Failed to fetch positions for pool ${pool.poolAddress}`, err);
       continue;
     }
 
+    const { dlmmPool, positionsByUser, activeBin } = poolContext;
     let activeBinId: number | null = null;
     let tokenXPriceSol: number | null = null;
-    try {
-      const activeBin = await withRpcFallback(conn => dlmmPool.getActiveBin());
+    if (activeBin !== null) {
       activeBinId = activeBin.binId;
       if (pool.tokenYMint === SOL_MINT) {
         tokenXPriceSol = Number(dlmmPool.fromPricePerLamport(Number(activeBin.price)));
       }
-    } catch (err) {
-      log("WARN", `Failed to get active bin for pool ${pool.poolAddress.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     const positionPnlRows = await fetchPositionPnlRows(pool.poolAddress, walletAddress);

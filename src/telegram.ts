@@ -27,6 +27,11 @@ const TELEGRAM_POLL_RETRY_BASE_MS = 2_000;
 const TELEGRAM_POLL_RETRY_MAX_MS = 30_000;
 let enabled = false;
 
+function formatOptionalNumber(value: number | undefined, decimals?: number): string {
+  if (value === undefined || !Number.isFinite(value)) return "unknown";
+  return decimals === undefined ? String(value) : value.toFixed(decimals);
+}
+
 function parseAmount(value: string): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -147,9 +152,9 @@ export async function notifyAgentStart(params: {
 export async function notifyOORRight(params: {
   positionAddress: string;
   poolAddress: string;
-  rsi: number;
-  bbUpper: number;
-  price: number;
+  rsi?: number;
+  bbUpper?: number;
+  price?: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -157,9 +162,9 @@ export async function notifyOORRight(params: {
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
     `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
-    `<b>BB Upper:</b> ${params.bbUpper}`,
-    `<b>Price:</b> ${params.price}`,
+    `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
+    `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
+    `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
     "Status: 100% TOKEN — monitoring for exit signal",
   ].join("\n");
   await sendMessage(msg);
@@ -168,9 +173,9 @@ export async function notifyOORRight(params: {
 export async function notifyOORLeft(params: {
   positionAddress: string;
   poolAddress: string;
-  rsi: number;
-  bbUpper: number;
-  price: number;
+  rsi?: number;
+  bbUpper?: number;
+  price?: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -178,9 +183,9 @@ export async function notifyOORLeft(params: {
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
     `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
-    `<b>BB Upper:</b> ${params.bbUpper}`,
-    `<b>Price:</b> ${params.price}`,
+    `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
+    `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
+    `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
     "Status: 100% SOL — monitoring for exit signal",
   ].join("\n");
   await sendMessage(msg);
@@ -189,9 +194,9 @@ export async function notifyOORLeft(params: {
 export async function notifyOORUnknown(params: {
   positionAddress: string;
   poolAddress: string;
-  rsi: number;
-  bbUpper: number;
-  price: number;
+  rsi?: number;
+  bbUpper?: number;
+  price?: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -199,9 +204,9 @@ export async function notifyOORUnknown(params: {
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
     `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
-    `<b>BB Upper:</b> ${params.bbUpper}`,
-    `<b>Price:</b> ${params.price}`,
+    `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
+    `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
+    `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
     "Status: OOR but direction could not be determined — monitoring for exit signal",
   ].join("\n");
   await sendMessage(msg);
@@ -210,9 +215,9 @@ export async function notifyOORUnknown(params: {
 export async function notifyBackInRange(params: {
   positionAddress: string;
   poolAddress: string;
-  rsi: number;
-  bbUpper: number;
-  price: number;
+  rsi?: number;
+  bbUpper?: number;
+  price?: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -220,9 +225,9 @@ export async function notifyBackInRange(params: {
     "",
     `<b>Position:</b> <code>${params.positionAddress}</code>`,
     `<b>Pool:</b> <code>${params.poolAddress}</code>`,
-    `<b>RSI(2):</b> ${params.rsi.toFixed(2)}`,
-    `<b>BB Upper:</b> ${params.bbUpper}`,
-    `<b>Price:</b> ${params.price}`,
+    `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
+    `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
+    `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
     "Status: Position is now back in range — fees accumulating",
   ].join("\n");
   await sendMessage(msg);

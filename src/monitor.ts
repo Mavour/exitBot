@@ -186,6 +186,103 @@ function restorePeakPnlFromSnapshots(): void {
   }
 }
 
+function handleRangeNotifications(pos: ActivePosition, posKey: string): void {
+  const indicator = lastIndicatorData.get(posKey);
+  const price = indicator?.price;
+  const hourMs = 60 * 60 * 1000;
+
+  if (pos.isOORRight) {
+    log("WARN", "Position is OUT-OF-RANGE RIGHT", {
+      positionAddress: posKey,
+      price: price ?? null,
+    });
+    const lastNotified = oorRightLastNotified.get(posKey) ?? 0;
+    if (Date.now() - lastNotified > hourMs) {
+      safeNotify(
+        () =>
+          notifyOORRight({
+            positionAddress: posKey,
+            poolAddress: pos.poolAddress.toBase58(),
+            rsi: indicator?.rsi,
+            bbUpper: indicator?.bb.upper,
+            price,
+          }),
+        "OOR right"
+      );
+      oorRightLastNotified.set(posKey, Date.now());
+    }
+  }
+
+  if (pos.isOORLeft) {
+    log("WARN", "Position is OUT-OF-RANGE LEFT", {
+      positionAddress: posKey,
+      price: price ?? null,
+    });
+    const lastNotified = oorLeftLastNotified.get(posKey) ?? 0;
+    if (Date.now() - lastNotified > hourMs) {
+      safeNotify(
+        () =>
+          notifyOORLeft({
+            positionAddress: posKey,
+            poolAddress: pos.poolAddress.toBase58(),
+            rsi: indicator?.rsi,
+            bbUpper: indicator?.bb.upper,
+            price,
+          }),
+        "OOR left"
+      );
+      oorLeftLastNotified.set(posKey, Date.now());
+    }
+  }
+
+  if (!pos.isInRange && !pos.isOORRight && !pos.isOORLeft) {
+    log("WARN", "Position is OOR but direction unknown", {
+      positionAddress: posKey,
+      price: price ?? null,
+    });
+    safeNotify(
+      () =>
+        notifyOORUnknown({
+          positionAddress: posKey,
+          poolAddress: pos.poolAddress.toBase58(),
+          rsi: indicator?.rsi,
+          bbUpper: indicator?.bb.upper,
+          price,
+        }),
+      "OOR unknown"
+    );
+  }
+
+  const isOORNow = pos.isOORRight || pos.isOORLeft;
+  const isInRangeNow = pos.isInRange && !isOORNow;
+  const wasOORBefore = wasOOR.has(posKey);
+
+  if (wasOORBefore && isInRangeNow) {
+    log("INFO", "Position recovered to IN-RANGE", {
+      positionAddress: posKey,
+      price: price ?? null,
+    });
+    safeNotify(
+      () =>
+        notifyBackInRange({
+          positionAddress: posKey,
+          poolAddress: pos.poolAddress.toBase58(),
+          rsi: indicator?.rsi,
+          bbUpper: indicator?.bb.upper,
+          price,
+        }),
+      "back in range"
+    );
+  }
+
+  if (wasOOR.has(posKey) && !isOORNow) {
+    oorRightLastNotified.delete(posKey);
+    oorLeftLastNotified.delete(posKey);
+    wasOOR.delete(posKey);
+  }
+  if (isOORNow) wasOOR.add(posKey);
+}
+
 export async function startMonitor(): Promise<void> {
   process.on("SIGINT", handleShutdown);
   process.on("SIGTERM", handleShutdown);
@@ -343,25 +440,6 @@ export async function startMonitor(): Promise<void> {
 
         inFlightSet.add(posKey);
         try {
-          let closedOnChain = false;
-          try {
-            closedOnChain = await isPositionClosedOnChain(posKey);
-          } catch (closedCheckErr) {
-            logError(`Failed to check on-chain close status for ${posKey}`, closedCheckErr);
-          }
-
-          if (closedOnChain) {
-            log("WARN", "Position account closed on-chain, recording manual close", {
-              positionAddress: posKey,
-            });
-            const snapshot =
-              getManualCloseSnapshots().find((s) => s.positionAddress === posKey) ??
-              createManualCloseSnapshot(pos);
-            saveManualCloseRecord(snapshot);
-            tracked.state = "EXITED";
-            continue;
-          }
-
           if (pos.pnl !== null && pos.pnl.pnlPercent <= HARD_STOP_LOSS_PNL_PERCENT) {
             const peakPnl = positionPeakPnl.get(posKey);
             log("EXIT", "EXIT CONDITIONS MET", {
@@ -382,6 +460,27 @@ export async function startMonitor(): Promise<void> {
           }
 
           if (tracked.state === "MONITORING") {
+          let closedOnChain = false;
+          try {
+            closedOnChain = await isPositionClosedOnChain(posKey);
+          } catch (closedCheckErr) {
+            logError(`Failed to check on-chain close status for ${posKey}`, closedCheckErr);
+          }
+
+          if (closedOnChain) {
+            log("WARN", "Position account closed on-chain, recording manual close", {
+              positionAddress: posKey,
+            });
+            const snapshot =
+              getManualCloseSnapshots().find((s) => s.positionAddress === posKey) ??
+              createManualCloseSnapshot(pos);
+            saveManualCloseRecord(snapshot);
+            tracked.state = "EXITED";
+            continue;
+          }
+
+          handleRangeNotifications(pos, posKey);
+
           const candles = await getCandles15m(
             pos.tokenMint,
             REQUIRED_CANDLES
@@ -442,99 +541,6 @@ export async function startMonitor(): Promise<void> {
             cooldownPassed,
             ageSource,
           });
-
-          const hourMs = 60 * 60 * 1000;
-
-          if (pos.isOORRight) {
-            log("WARN", "Position is OUT-OF-RANGE RIGHT", {
-              positionAddress: posKey,
-              price: currentPrice,
-            });
-            const lastNotified = oorRightLastNotified.get(posKey) ?? 0;
-            if (Date.now() - lastNotified > hourMs) {
-              safeNotify(
-                () =>
-                  notifyOORRight({
-                    positionAddress: posKey,
-                    poolAddress: pos.poolAddress.toBase58(),
-                    rsi: snapshot.rsi,
-                    bbUpper: snapshot.bb.upper,
-                    price: currentPrice,
-                  }),
-                "OOR right"
-              );
-              oorRightLastNotified.set(posKey, Date.now());
-            }
-          }
-
-          if (pos.isOORLeft) {
-            log("WARN", "Position is OUT-OF-RANGE LEFT", {
-              positionAddress: posKey,
-              price: currentPrice,
-            });
-            const lastNotified = oorLeftLastNotified.get(posKey) ?? 0;
-            if (Date.now() - lastNotified > hourMs) {
-              safeNotify(
-                () =>
-                  notifyOORLeft({
-                    positionAddress: posKey,
-                    poolAddress: pos.poolAddress.toBase58(),
-                    rsi: snapshot.rsi,
-                    bbUpper: snapshot.bb.upper,
-                    price: currentPrice,
-                  }),
-                "OOR left"
-              );
-              oorLeftLastNotified.set(posKey, Date.now());
-            }
-          }
-
-          if (!pos.isInRange && !pos.isOORRight && !pos.isOORLeft) {
-            log("WARN", "Position is OOR but direction unknown", {
-              positionAddress: posKey,
-              price: currentPrice,
-            });
-            safeNotify(
-              () =>
-                notifyOORUnknown({
-                  positionAddress: posKey,
-                  poolAddress: pos.poolAddress.toBase58(),
-                  rsi: snapshot.rsi,
-                  bbUpper: snapshot.bb.upper,
-                  price: currentPrice,
-                }),
-              "OOR unknown"
-            );
-          }
-
-          const isOORNow = pos.isOORRight || pos.isOORLeft;
-          const isInRangeNow = pos.isInRange && !isOORNow;
-          const wasOORBefore = wasOOR.has(posKey);
-
-          if (wasOORBefore && isInRangeNow) {
-            log("INFO", "Position recovered to IN-RANGE", {
-              positionAddress: posKey,
-              price: currentPrice,
-            });
-            safeNotify(
-              () =>
-                notifyBackInRange({
-                  positionAddress: posKey,
-                  poolAddress: pos.poolAddress.toBase58(),
-                  rsi: snapshot.rsi,
-                  bbUpper: snapshot.bb.upper,
-                  price: currentPrice,
-                }),
-              "back in range"
-            );
-          }
-
-          if (wasOOR.has(posKey) && !isOORNow) {
-            oorRightLastNotified.delete(posKey);
-            oorLeftLastNotified.delete(posKey);
-            wasOOR.delete(posKey);
-          }
-          if (isOORNow) wasOOR.add(posKey);
 
           // If RSI is 0, indicators couldn't be computed (not enough data)
           if (snapshot.rsi === 0 && snapshot.bb.upper === 0) {

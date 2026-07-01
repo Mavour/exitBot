@@ -46,7 +46,11 @@ export async function withRpcFallback<T>(fn: (conn: Connection) => Promise<T>): 
   for (let attempt = 0; attempt < connections.length; attempt++) {
     const idx = (activeIndex + attempt) % connections.length;
     try {
-      const result = await fn(connections[idx].conn);
+      const result = await withTimeout(
+        fn(connections[idx].conn),
+        RPC_TIMEOUT_MS,
+        `RPC timeout after ${RPC_TIMEOUT_MS}ms`
+      );
       if (attempt > 0) activeIndex = idx;
       return result;
     } catch (err) {
@@ -56,4 +60,19 @@ export async function withRpcFallback<T>(fn: (conn: Connection) => Promise<T>): 
     }
   }
   throw new Error('All RPC connections failed');
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  message: string
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
