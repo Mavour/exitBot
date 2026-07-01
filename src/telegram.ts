@@ -19,7 +19,7 @@ import {
 const TELEGRAM_API = "https://api.telegram.org";
 const LOCK_FILE = "/tmp/dlmm-exit-agent-menu.lock";
 const OFFSET_FILE = "/tmp/dlmm-exit-agent-offset.txt";
-const HARD_STOP_LOSS_PNL_PERCENT = -15;
+const HARD_STOP_LOSS_PNL_PERCENT = -10;
 const TELEGRAM_LONG_POLL_TIMEOUT_SECONDS = 25;
 const TELEGRAM_FETCH_TIMEOUT_MS = 35_000;
 const TELEGRAM_POLL_IDLE_DELAY_MS = 500;

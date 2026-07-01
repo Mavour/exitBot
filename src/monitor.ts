@@ -36,7 +36,7 @@ const POSITION_REFETCH_INTERVAL = Math.max(
   1,
   Math.ceil(60_000 / CONFIG.pollIntervalMs)
 );
-const HARD_STOP_LOSS_PNL_PERCENT = -15;
+const HARD_STOP_LOSS_PNL_PERCENT = -10;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
 type ExitTriggerType = "HARD_STOP_LOSS" | "RSI_BB" | "TRAILING_PROFIT";
