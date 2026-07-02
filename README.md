@@ -151,7 +151,7 @@ pm2 logs dlmm-exit-agent
 
 ## Cara Kerja
 
-Agent ngecek tiap 60 detik. Untuk setiap posisi DLMM aktif di dompet kamu:
+Agent ngecek tiap 10 detik. Untuk setiap posisi DLMM aktif di dompet kamu:
 
 1. Ambil data 20 candle 15 menit terakhir dari GMGN API
 2. Hitung **RSI(2)** + **Bollinger Band(20, 2σ)**
@@ -176,7 +176,7 @@ Hard stop-loss ini **hardcoded di -10%**, bukan setting `.env` atau menu Telegra
 | `RPC_URL_FALLBACK_2` | `solana-mainnet.g.alchemy.com` | ❌ | RPC cadangan |
 | `WALLET_PRIVATE_KEY` | — | ✅ | Private key dompet (base58) |
 | `GMGN_API_KEY` | — | ✅ | API key dari GMGN OpenAPI |
-| `POLL_INTERVAL_MS` | 60000 | ❌ | Interval pengecekan (ms) |
+| `POLL_INTERVAL_MS` | 10000 | ❌ | Interval pengecekan (ms) |
 | `EXIT_COOLDOWN_MINUTES` | 3 | ❌ | Waktu tunggu setelah posisi terdeteksi sebelum exit trigger non-SL aktif |
 | `DRY_RUN` | true | ❌ | `true` = simulasi aja, `false` = beneran exit |
 | `RSI_PERIOD` | 2 | ❌ | Period RSI |

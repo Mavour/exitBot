@@ -12,7 +12,7 @@ export interface PNLData {
   totalFeeEarnedSol: number;
   pnlSol: number;
   pnlPercent: number;
-  source?: "rpc" | "meteora_position" | "meteora_pool";
+  source?: "meteora_position_api" | "meteora_position_formula" | "meteora_portfolio";
 }
 
 export interface ActivePosition {
@@ -75,7 +75,7 @@ async function resolveTokenSymbol(
   return getTokenSymbol(mint);
 }
 
-function parsePNL(
+function parsePortfolioPoolPNL(
   poolData: Record<string, unknown>
 ): PNLData | null {
   try {
@@ -95,7 +95,7 @@ function parsePNL(
 
     if (!Number.isFinite(pnlSol)) return null;
 
-    return { depositValueSol, currentValueSol, totalFeeEarnedSol, pnlSol, pnlPercent, source: "meteora_pool" };
+    return { depositValueSol, currentValueSol, totalFeeEarnedSol, pnlSol, pnlPercent, source: "meteora_portfolio" };
   } catch {
     return null;
   }
@@ -196,24 +196,33 @@ async function fetchPositionPnlRows(
 function parsePositionRowPNL(row: Record<string, any> | undefined): PNLData | null {
   if (!row) return null;
 
-  const pnlSol = firstFiniteNumber(row.pnlSol);
-  const pnlPercent = firstFiniteNumber(row.pnlSolPctChange, row.pnlPctChange, row.pnlPct);
-  if (pnlSol === null || pnlPercent === null) return null;
-
-  const claimedFees = pnlNumber(readPath(row, "allTimeFees.total.sol"));
   const unclaimedFees =
     pnlNumber(readPath(row, "unrealizedPnl.unclaimedFeeTokenX.amountSol")) +
     pnlNumber(readPath(row, "unrealizedPnl.unclaimedFeeTokenY.amountSol")) +
     pnlNumber(readPath(row, "unrealizedPnl.unclaimedRewardTokenX.amountSol")) +
     pnlNumber(readPath(row, "unrealizedPnl.unclaimedRewardTokenY.amountSol"));
+  const calculated = calculatePnl({
+    balance: readPath(row, "unrealizedPnl.balancesSol"),
+    withdrawals: readPath(row, "allTimeWithdrawals.total.sol"),
+    claimableFees: unclaimedFees,
+    claimedFees: readPath(row, "allTimeFees.total.sol"),
+    deposits: readPath(row, "allTimeDeposits.total.sol"),
+  });
+
+  const apiPnlSol = firstFiniteNumber(row.pnlSol);
+  const pnlSol = apiPnlSol ?? calculated.pnl;
+  const pnlPercent =
+    firstFiniteNumber(row.pnlSolPctChange, row.pnlPctChange, row.pnlPct) ??
+    (calculated.deposits > 0 ? (pnlSol / calculated.deposits) * 100 : null);
+  if (!Number.isFinite(pnlSol) || pnlPercent === null || !Number.isFinite(pnlPercent)) return null;
 
   return {
-    depositValueSol: pnlNumber(readPath(row, "allTimeDeposits.total.sol")),
-    currentValueSol: pnlNumber(readPath(row, "unrealizedPnl.balancesSol")),
-    totalFeeEarnedSol: claimedFees + unclaimedFees,
+    depositValueSol: calculated.deposits,
+    currentValueSol: calculated.balance,
+    totalFeeEarnedSol: calculated.claimedFees + calculated.claimableFees,
     pnlSol,
     pnlPercent,
-    source: "meteora_position",
+    source: apiPnlSol !== null ? "meteora_position_api" : "meteora_position_formula",
   };
 }
 
@@ -223,51 +232,47 @@ function parsePositionOpenedAtMs(row: Record<string, any> | undefined): number |
   return createdAt > 1_000_000_000_000 ? createdAt : createdAt * 1000;
 }
 
-function calculateRpcPNL({
-  posInfo,
-  dlmmPool,
-  tokenXPriceSol,
-  costBasis,
+function selectPNL({
+  positionAddress,
+  positionRowPNL,
+  portfolioPNL,
+  poolPositionCount,
 }: {
-  posInfo: any;
-  dlmmPool: DLMM;
-  tokenXPriceSol: number | null;
-  costBasis: Record<string, any> | undefined;
+  positionAddress: string;
+  positionRowPNL: PNLData | null;
+  portfolioPNL: PNLData | null;
+  poolPositionCount: number;
 }): PNLData | null {
-  if (!costBasis || tokenXPriceSol === null || !Number.isFinite(tokenXPriceSol)) {
-    return null;
+  if (positionRowPNL && portfolioPNL) {
+    const solDiff = Math.abs(positionRowPNL.pnlSol - portfolioPNL.pnlSol);
+    const pctDiff = Math.abs(positionRowPNL.pnlPercent - portfolioPNL.pnlPercent);
+    if (solDiff > 0.0005 || pctDiff > 0.25) {
+      log("WARN", "Meteora position PNL differs from portfolio PNL; using position PNL", {
+        positionAddress,
+        positionSource: positionRowPNL.source,
+        positionPnlSol: positionRowPNL.pnlSol,
+        positionPnlPercent: positionRowPNL.pnlPercent,
+        portfolioPnlSol: portfolioPNL.pnlSol,
+        portfolioPnlPercent: portfolioPNL.pnlPercent,
+        solDiff,
+        pctDiff,
+      });
+    }
   }
 
-  const tokenXDecimals = dlmmPool.tokenX.mint.decimals;
-  const tokenYDecimals = dlmmPool.tokenY.mint.decimals;
-  const amountX = pnlNumber(posInfo.totalXAmount?.toString()) / (10 ** tokenXDecimals);
-  const amountY = pnlNumber(posInfo.totalYAmount?.toString()) / (10 ** tokenYDecimals);
-  const feeX = pnlNumber(posInfo.feeX?.toString()) / (10 ** tokenXDecimals);
-  const feeY = pnlNumber(posInfo.feeY?.toString()) / (10 ** tokenYDecimals);
-  const balanceSol = amountX * tokenXPriceSol + amountY;
-  const claimableSol = feeX * tokenXPriceSol + feeY;
+  if (positionRowPNL) return positionRowPNL;
+  if (portfolioPNL && poolPositionCount === 1) return portfolioPNL;
 
-  const calculated = calculatePnl({
-    balance: balanceSol,
-    withdrawals: readPath(costBasis, "allTimeWithdrawals.total.sol"),
-    claimableFees: claimableSol,
-    claimedFees: readPath(costBasis, "allTimeFees.total.sol"),
-    deposits: readPath(costBasis, "allTimeDeposits.total.sol"),
-  });
-
-  const pnlPct = calculated.pnlPct;
-  if (!Number.isFinite(calculated.pnl) || pnlPct === null || !Number.isFinite(pnlPct)) {
-    return null;
+  if (portfolioPNL) {
+    log("WARN", "Position PNL unavailable; not using aggregated portfolio PNL for multi-position pool", {
+      positionAddress,
+      poolPositionCount,
+      portfolioPnlSol: portfolioPNL.pnlSol,
+      portfolioPnlPercent: portfolioPNL.pnlPercent,
+    });
   }
 
-  return {
-    depositValueSol: calculated.deposits,
-    currentValueSol: calculated.balance,
-    totalFeeEarnedSol: calculated.claimedFees + calculated.claimableFees,
-    pnlSol: calculated.pnl,
-    pnlPercent: pnlPct,
-    source: "rpc",
-  };
+  return null;
 }
 
 export async function fetchAllActivePositions(
@@ -344,12 +349,8 @@ export async function fetchAllActivePositions(
 
     const { dlmmPool, positionsByUser, activeBin } = poolContext;
     let activeBinId: number | null = null;
-    let tokenXPriceSol: number | null = null;
     if (activeBin !== null) {
       activeBinId = activeBin.binId;
-      if (pool.tokenYMint === SOL_MINT) {
-        tokenXPriceSol = Number(dlmmPool.fromPricePerLamport(Number(activeBin.price)));
-      }
     }
 
     const positionPnlRows = await fetchPositionPnlRows(pool.poolAddress, walletAddress);
@@ -424,15 +425,14 @@ export async function fetchAllActivePositions(
       });
 
       const positionPnlRow = positionPnlRows.get(posAddrStr);
-      const pnl =
-        calculateRpcPNL({
-          posInfo,
-          dlmmPool,
-          tokenXPriceSol,
-          costBasis: positionPnlRow,
-        }) ??
-        parsePositionRowPNL(positionPnlRow) ??
-        parsePNL(pool);
+      const positionRowPNL = parsePositionRowPNL(positionPnlRow);
+      const portfolioPNL = parsePortfolioPoolPNL(pool);
+      const pnl = selectPNL({
+        positionAddress: posAddrStr,
+        positionRowPNL,
+        portfolioPNL,
+        poolPositionCount: pool.listPositions.length,
+      });
 
       positions.push({
         poolAddress: poolPubkey,

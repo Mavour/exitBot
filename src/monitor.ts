@@ -32,10 +32,7 @@ import {
 } from "./manual-close-cache";
 
 const REQUIRED_CANDLES = 60;
-const POSITION_REFETCH_INTERVAL = Math.max(
-  1,
-  Math.ceil(60_000 / CONFIG.pollIntervalMs)
-);
+const POSITION_REFETCH_INTERVAL = 1;
 const HARD_STOP_LOSS_PNL_PERCENT = -10;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
@@ -351,7 +348,7 @@ export async function startMonitor(): Promise<void> {
       inFlight: inFlightSet.size,
     });
 
-    // Only re-fetch positions every POSITION_REFETCH_INTERVAL cycles
+    // Refresh Meteora position/PNL data every poll.
     const shouldRefetch = pollCycle % POSITION_REFETCH_INTERVAL === 0;
     if (shouldRefetch) {
       log("INFO", "Re-fetching position list");

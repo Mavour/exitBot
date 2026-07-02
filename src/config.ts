@@ -61,7 +61,7 @@ export const CONFIG = {
   rpcUrlFallback1: process.env.RPC_URL_FALLBACK_1 || 'https://api.mainnet-beta.solana.com',
   rpcUrlFallback2: process.env.RPC_URL_FALLBACK_2 || 'https://solana-mainnet.g.alchemy.com/v2/demo',
   walletPrivateKey: requireEnv("WALLET_PRIVATE_KEY"),
-  pollIntervalMs: parseNumber("POLL_INTERVAL_MS", 60000, 1000),
+  pollIntervalMs: parseNumber("POLL_INTERVAL_MS", 10000, 1000),
   exitCooldownMs: parseNumber("EXIT_COOLDOWN_MINUTES", 3, 0) * 60_000,
   dryRun: parseBool("DRY_RUN", true),
   rsiPeriod: parseNumber("RSI_PERIOD", 2, 1),
