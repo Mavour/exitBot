@@ -17,6 +17,7 @@ import {
   notifyExitSuccess,
   notifyExitStarted,
   notifyExitFailed,
+  notifyPositionClosedExternally,
   notifyOORRight,
   notifyOORLeft,
   notifyOORUnknown,
@@ -698,6 +699,8 @@ export async function startMonitor(): Promise<void> {
               receivedY: result.receivedY,
               txCount: result.txSignatures.length,
               triggerType: exitTriggerType,
+              closeAttribution: result.closeAttribution ?? null,
+              closeReason: result.closeReason ?? null,
               swapSuccess: result.swapResult?.success ?? null,
               swapReason: result.swapError ?? null,
               peakPnlSol: peakPnl?.pnlSol ?? null,
@@ -725,6 +728,8 @@ export async function startMonitor(): Promise<void> {
                   trailingDropPercent: exitSignal?.trailingDropPercent,
                   swapResult: result.swapResult,
                   swapError: result.swapError,
+                  closeAttribution: result.closeAttribution,
+                  closeReason: result.closeReason,
                 }),
               "exit success"
             );
@@ -753,12 +758,41 @@ export async function startMonitor(): Promise<void> {
                   dryRun: result.dryRun,
                   swapSuccess: result.swapResult?.success ?? null,
                   swapReason: result.swapError ?? null,
+                  closeAttribution: result.closeAttribution,
                 });
               } catch (saveErr) {
                 logError("saveExitRecord failed (non-fatal)", saveErr);
               }
             }
           } else {
+            if (result.alreadyClosed && result.closeAttribution === "MANUAL_EXTERNAL") {
+              const snapshot =
+                getManualCloseSnapshots().find((s) => s.positionAddress === posKey) ??
+                createManualCloseSnapshot(pos);
+              saveManualCloseRecord(snapshot);
+              tracked.state = "EXITED";
+              tracked.exitTriggerType = undefined;
+              tracked.exitSignal = undefined;
+              log("WARN", "Position already closed externally during exit attempt", {
+                positionAddress: posKey,
+                triggerType: exitTriggerType,
+                closeAttribution: result.closeAttribution,
+                closeReason: result.closeReason,
+                currentPnlSol: pos.pnl?.pnlSol ?? null,
+                currentPnlPercent: pos.pnl?.pnlPercent ?? null,
+              });
+              safeNotify(
+                () =>
+                  notifyPositionClosedExternally({
+                    positionAddress: posKey,
+                    poolAddress: pos.poolAddress.toBase58(),
+                    reason: result.closeReason ?? "Position already closed externally/manual",
+                  }),
+                "external close"
+              );
+              continue;
+            }
+
             tracked.state = "MONITORING";
             tracked.exitTriggerType = undefined;
             tracked.exitSignal = undefined;

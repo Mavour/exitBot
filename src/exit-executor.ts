@@ -20,6 +20,12 @@ import { withRpcFallback } from "./rpc-manager";
 
 const SEND_TX_TIMEOUT_MS = 30_000;
 const SOL_MINT = "So11111111111111111111111111111111111111112";
+const SYSTEM_PROGRAM = "11111111111111111111111111111111";
+
+export type CloseAttribution =
+  | "BOT_CONFIRMED"
+  | "BOT_UNCONFIRMED_BUT_CLOSED"
+  | "MANUAL_EXTERNAL";
 
 export interface ExitResult {
   success: boolean;
@@ -32,6 +38,9 @@ export interface ExitResult {
   swapResult: SwapResult | null;
   swapError?: string;
   postCloseErrors: string[];
+  alreadyClosed?: boolean;
+  closeAttribution?: CloseAttribution;
+  closeReason?: string;
 }
 
 function buildPriorityFeeIx(): TransactionInstruction {
@@ -48,6 +57,31 @@ function buildCUILimitIx(): TransactionInstruction {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isAlreadyClosedPositionError(err: unknown): boolean {
+  const msg = errorMessage(err);
+  return (
+    /AccountOwnedByWrongProgram/i.test(msg) ||
+    /owned by a different program than expected/i.test(msg) ||
+    /custom program error:\s*0xbbf/i.test(msg) ||
+    /Error Number:\s*3007/i.test(msg) ||
+    msg.includes(SYSTEM_PROGRAM)
+  );
+}
+
+function attachSubmittedSignature(err: Error, signature: string | undefined): Error {
+  if (!signature) return err;
+  const current = (err as any).submittedSignatures;
+  const signatures = Array.isArray(current) ? current : [];
+  if (!signatures.includes(signature)) signatures.push(signature);
+  (err as any).submittedSignatures = signatures;
+  return err;
+}
+
+function extractSubmittedSignatures(err: unknown): string[] {
+  const signatures = (err as any)?.submittedSignatures;
+  return Array.isArray(signatures) ? signatures.filter((s) => typeof s === "string") : [];
 }
 
 function isSendTransactionError(err: unknown): err is SendTransactionError {
@@ -153,6 +187,7 @@ async function sendWithRetry(
 
   const maxRetries = 2;
   let lastErr: Error | undefined;
+  const submittedSignatures: string[] = [];
 
   const isNonRetryable = (err: unknown): boolean => {
     const msg = errorMessage(err);
@@ -187,9 +222,11 @@ async function sendWithRetry(
         SEND_TX_TIMEOUT_MS,
         `sendTransaction timed out after ${SEND_TX_TIMEOUT_MS}ms`
       );
+      submittedSignatures.push(sig);
     } catch (sendErr) {
       const detailedError = await formatSendError(await withRpcFallback(async conn => conn), sendErr);
       lastErr = new Error(detailedError);
+      (lastErr as any).submittedSignatures = [...submittedSignatures];
       if (isNonRetryable(sendErr)) {
         log("ERROR", `Transaction send failed (non-retryable)`, {
           attempt: attempt + 1,
@@ -227,12 +264,30 @@ async function sendWithRetry(
       if (isNonRetryable(confirmErr)) {
         const errMsg = confirmErr instanceof Error ? confirmErr.message : String(confirmErr);
         log("ERROR", `Confirm failed (non-retryable)`, { error: errMsg });
-        throw confirmErr instanceof Error ? confirmErr : new Error(errMsg);
+        throw attachSubmittedSignature(confirmErr instanceof Error ? confirmErr : new Error(errMsg), sig);
       }
       const errMsg = confirmErr instanceof Error ? confirmErr.message : String(confirmErr);
-      const status = await withRpcFallback(conn =>
-        conn.getSignatureStatus(sig, { searchTransactionHistory: true })
-      );
+      let status: Awaited<ReturnType<Connection["getSignatureStatus"]>> | null = null;
+      try {
+        status = await withRpcFallback(conn =>
+          conn.getSignatureStatus(sig, { searchTransactionHistory: true })
+        );
+      } catch (statusErr) {
+        lastErr = attachSubmittedSignature(statusErr instanceof Error ? statusErr : new Error(String(statusErr)), sig);
+        (lastErr as any).submittedSignatures = [...submittedSignatures];
+        if (attempt < maxRetries) {
+          const delay = 1000 * Math.pow(2, attempt);
+          log("WARN", `Signature status check failed, retrying in ${delay}ms`, {
+            attempt: attempt + 1,
+            maxRetries,
+            signature: sig,
+            error: lastErr.message,
+          });
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+        break;
+      }
       const confStatus = status?.value?.confirmationStatus;
       if (confStatus === "confirmed" || confStatus === "finalized") {
         log("INFO", `Tx already confirmed despite confirm timeout`, {
@@ -241,7 +296,8 @@ async function sendWithRetry(
         });
         return sig;
       }
-      lastErr = confirmErr instanceof Error ? confirmErr : new Error(errMsg);
+      lastErr = attachSubmittedSignature(confirmErr instanceof Error ? confirmErr : new Error(errMsg), sig);
+      (lastErr as any).submittedSignatures = [...submittedSignatures];
       if (attempt < maxRetries) {
         const delay = 1000 * Math.pow(2, attempt);
         log("WARN", `Confirm failed, retrying in ${delay}ms`, {
@@ -254,7 +310,9 @@ async function sendWithRetry(
     }
   }
 
-  throw lastErr || new Error(`Transaction failed after ${maxRetries} retries`);
+  const finalErr = lastErr || new Error(`Transaction failed after ${maxRetries} retries`);
+  (finalErr as any).submittedSignatures = [...submittedSignatures];
+  throw finalErr;
 }
 
 async function sendClaimTxs(
@@ -286,6 +344,66 @@ async function buildRemoveLiquidityTxs(
       shouldClaimAndClose: true,
     });
   });
+}
+
+async function isPositionClosedByAccount(positionPubkey: PublicKey): Promise<boolean> {
+  const accountInfo = await withRpcFallback(conn =>
+    conn.getAccountInfo(positionPubkey, CONFIG.commitment)
+  );
+  const owner = accountInfo?.owner?.toBase58();
+  return !accountInfo || owner === SYSTEM_PROGRAM;
+}
+
+async function isPositionMissingFromMeteora(position: ActivePosition, wallet: Keypair): Promise<boolean> {
+  const url = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${wallet.publicKey.toBase58()}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) return false;
+  const data = await res.json() as any;
+  const pools = Array.isArray(data?.pools) ? data.pools : [];
+  return !pools.some((pool: any) =>
+    Array.isArray(pool?.listPositions) &&
+    pool.listPositions.includes(position.positionPubkey.toBase58())
+  );
+}
+
+async function verifyPositionClosed(position: ActivePosition, wallet: Keypair): Promise<boolean> {
+  try {
+    if (await isPositionClosedByAccount(position.positionPubkey)) return true;
+  } catch (err) {
+    log("WARN", "Position account close verification failed", {
+      positionAddress: position.positionPubkey.toBase58(),
+      error: errorMessage(err),
+    });
+  }
+
+  try {
+    if (await isPositionMissingFromMeteora(position, wallet)) return true;
+  } catch (err) {
+    log("WARN", "Meteora close verification failed", {
+      positionAddress: position.positionPubkey.toBase58(),
+      error: errorMessage(err),
+    });
+  }
+
+  return false;
+}
+
+function markAlreadyClosed(
+  result: ExitResult,
+  attribution: CloseAttribution,
+  reason: string
+): void {
+  result.alreadyClosed = true;
+  result.closeAttribution = attribution;
+  result.closeReason = reason;
+  result.success = attribution !== "MANUAL_EXTERNAL";
+  result.swapResult = {
+    success: true,
+    inputSymbol: "?",
+    inputAmount: "0",
+    outputAmount: "0",
+    reason,
+  };
 }
 
 function divDecimals(raw: string, decimals: number): string {
@@ -423,24 +541,11 @@ export async function executeFullExit(
     // Fix E: Pre-flight idempotency check — if position already closed on-chain, treat as success
     if (!dryRun) {
       try {
-        const accountInfo = await withRpcFallback(conn =>
-          conn.getAccountInfo(position.positionPubkey, CONFIG.commitment)
-        );
-        const owner = accountInfo?.owner?.toBase58();
-        const SYSTEM_OWNER = "11111111111111111111111111111111";
-        const isClosed = !accountInfo || owner === SYSTEM_OWNER;
-        if (isClosed) {
-          log("WARN", `Position ${posAddr} already closed on-chain, treating as success`, {
-            owner: owner ?? "missing",
+        if (await verifyPositionClosed(position, wallet)) {
+          markAlreadyClosed(result, "MANUAL_EXTERNAL", "Position already closed externally/manual before bot exit");
+          log("WARN", `Position ${posAddr} already closed before bot exit`, {
+            closeAttribution: result.closeAttribution,
           });
-          result.success = true;
-          result.swapResult = {
-            success: true,
-            inputSymbol: "?",
-            inputAmount: "0",
-            outputAmount: "0",
-            reason: "Position already closed on-chain",
-          };
           return result;
         }
       } catch (preflightErr) {
@@ -480,6 +585,7 @@ export async function executeFullExit(
 
       const sigs = await sendClaimTxs(removeTxs, wallet);
       result.txSignatures.push(...sigs);
+      result.closeAttribution = "BOT_CONFIRMED";
 
       // Fix C: 5-second settle wait — prevents "zero balance" race when fetching actual received
       log("EXIT", `Liquidity removed (${sigs.length} tx), waiting 5s for chain to settle...`, {
@@ -574,6 +680,9 @@ export async function executeFullExit(
     // Swap is a separate, optional cleanup step.
     const liquidityRemoved = result.txSignatures.length > 0 || dryRun;
     result.success = liquidityRemoved;
+    if (liquidityRemoved && !result.closeAttribution) {
+      result.closeAttribution = dryRun ? undefined : "BOT_CONFIRMED";
+    }
     if (result.swapResult && !result.swapResult.success) {
       result.swapError = result.swapResult.reason || "swap incomplete";
       log("WARN", `Liquidity removed but swap incomplete`, {
@@ -591,6 +700,32 @@ export async function executeFullExit(
       dryRun,
     });
   } catch (err) {
+    for (const sig of extractSubmittedSignatures(err)) {
+      if (!result.txSignatures.includes(sig)) result.txSignatures.push(sig);
+    }
+
+    if (!dryRun && (isAlreadyClosedPositionError(err) || result.txSignatures.length > 0)) {
+      const closed = await verifyPositionClosed(position, wallet);
+      if (closed) {
+        const attribution: CloseAttribution =
+          result.txSignatures.length > 0 ? "BOT_UNCONFIRMED_BUT_CLOSED" : "MANUAL_EXTERNAL";
+        markAlreadyClosed(
+          result,
+          attribution,
+          attribution === "BOT_UNCONFIRMED_BUT_CLOSED"
+            ? "Position closed after bot submitted exit transaction, but confirmation was not observed"
+            : "Position already closed externally/manual"
+        );
+        log(attribution === "MANUAL_EXTERNAL" ? "WARN" : "EXIT", "Position closed during failed exit attempt", {
+          positionAddress: posAddr,
+          closeAttribution: attribution,
+          txSignatures: result.txSignatures,
+          originalError: errorMessage(err),
+        });
+        return result;
+      }
+    }
+
     result.success = false;
     result.error = err instanceof Error ? err.message : String(err);
     logError(`Exit failed for position ${posAddr}`, err);

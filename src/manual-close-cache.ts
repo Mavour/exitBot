@@ -113,6 +113,7 @@ export function snapshotToManualExitRecord(
   return {
     timestamp: new Date().toISOString(),
     exitSource: "MANUAL",
+    closeAttribution: "MANUAL_EXTERNAL",
     triggerType: "MANUAL",
     positionAddress: snapshot.positionAddress,
     poolAddress: snapshot.poolAddress,

@@ -5,6 +5,7 @@ import { log } from "./logger";
 export interface ExitRecord {
   timestamp: string;
   exitSource?: "BOT" | "MANUAL";
+  closeAttribution?: "BOT_CONFIRMED" | "BOT_UNCONFIRMED_BUT_CLOSED" | "MANUAL_EXTERNAL";
   triggerType?: "HARD_STOP_LOSS" | "RSI_BB" | "TRAILING_PROFIT" | "MANUAL";
   positionAddress: string;
   poolAddress: string;

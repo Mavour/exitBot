@@ -32,6 +32,17 @@ function formatOptionalNumber(value: number | undefined, decimals?: number): str
   return decimals === undefined ? String(value) : value.toFixed(decimals);
 }
 
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function code(value: unknown): string {
+  return `<code>${escapeHtml(value)}</code>`;
+}
+
 function parseAmount(value: string): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -160,8 +171,8 @@ export async function notifyOORRight(params: {
   const msg = [
     "<b>⚠️ OUT OF RANGE — RIGHT</b>",
     "",
-    `<b>Position:</b> <code>${params.positionAddress}</code>`,
-    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Pool:</b> ${code(params.poolAddress)}`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
     `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
     `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
@@ -181,8 +192,8 @@ export async function notifyOORLeft(params: {
   const msg = [
     "<b>⚠️ OUT OF RANGE — LEFT</b>",
     "",
-    `<b>Position:</b> <code>${params.positionAddress}</code>`,
-    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Pool:</b> ${code(params.poolAddress)}`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
     `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
     `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
@@ -202,8 +213,8 @@ export async function notifyOORUnknown(params: {
   const msg = [
     "<b>⚠️ OUT OF RANGE — DIRECTION UNKNOWN</b>",
     "",
-    `<b>Position:</b> <code>${params.positionAddress}</code>`,
-    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Pool:</b> ${code(params.poolAddress)}`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
     `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
     `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
@@ -223,8 +234,8 @@ export async function notifyBackInRange(params: {
   const msg = [
     "<b>✅ BACK IN RANGE</b>",
     "",
-    `<b>Position:</b> <code>${params.positionAddress}</code>`,
-    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Pool:</b> ${code(params.poolAddress)}`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
     `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
     `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
@@ -252,14 +263,21 @@ export async function notifyExitSuccess(params: {
   trailingDropPercent?: number;
   swapResult: SwapResult | null;
   swapError?: string;
+  closeAttribution?: "BOT_CONFIRMED" | "BOT_UNCONFIRMED_BUT_CLOSED" | "MANUAL_EXTERNAL";
+  closeReason?: string;
 }): Promise<void> {
   if (!enabled) return;
   const label = params.dryRun ? "🔍 EXIT SIMULATED" : "✅ EXIT SUCCESS";
   const lines: string[] = [
     `<b>${label}</b>`,
     "",
-    `<b>Position:</b> <code>${params.positionAddress}</code>`,
+    `<b>Position:</b> ${code(params.positionAddress)}`,
   ];
+
+  if (params.closeAttribution) {
+    lines.push(`<b>Close source:</b> ${escapeHtml(params.closeAttribution)}`);
+    if (params.closeReason) lines.push(`<b>Close note:</b> ${escapeHtml(params.closeReason)}`);
+  }
 
   if (params.trigger) {
     const isTrailing = params.trigger === "TRAILING_PROFIT";
@@ -277,7 +295,7 @@ export async function notifyExitSuccess(params: {
 
     lines.push(
       `<b>Trigger:</b> ${triggerLabel}`,
-      `<b>Reason:</b> ${reason}`,
+      `<b>Reason:</b> ${escapeHtml(reason)}`,
     );
     if (params.rsi !== undefined) lines.push(`<b>RSI(2):</b> ${params.rsi.toFixed(2)}`);
     if (params.price !== undefined) lines.push(`<b>Price:</b> ${params.price}`);
@@ -298,8 +316,8 @@ export async function notifyExitSuccess(params: {
   lines.push(
     "",
     "<b>💰 Received</b>",
-    `${params.tokenXSymbol}: ${params.receivedX}`,
-    `${params.tokenYSymbol}: ${params.receivedY}`,
+    `${escapeHtml(params.tokenXSymbol)}: ${escapeHtml(params.receivedX)}`,
+    `${escapeHtml(params.tokenYSymbol)}: ${escapeHtml(params.receivedY)}`,
   );
 
   if (params.pnl) {
@@ -329,7 +347,7 @@ export async function notifyExitSuccess(params: {
       lines.push(
         "",
         "<b>🔄 Auto-Swap</b>",
-        `✅ Swapped ${params.swapResult.inputAmount} ${params.swapResult.inputSymbol} → ${params.swapResult.outputAmount} SOL`,
+        `Swapped ${escapeHtml(params.swapResult.inputAmount)} ${escapeHtml(params.swapResult.inputSymbol)} -> ${escapeHtml(params.swapResult.outputAmount)} SOL`,
       );
     } else {
       const reason = params.swapResult.reason || params.swapError || "unknown";
@@ -340,16 +358,16 @@ export async function notifyExitSuccess(params: {
       lines.push(
         "",
         "<b>🔄 Auto-Swap</b>",
-        `⚠️ Swap skipped: ${reason}`,
+        `Swap skipped: ${escapeHtml(reason)}`,
         "Tokens remain in wallet. Sell manually via Jupiter UI:",
-        `<a href="https://jup.ag/swap/${residualToken}-SOL">Open Jupiter</a>`,
+        `<a href="https://jup.ag/swap/${encodeURIComponent(residualToken)}-SOL">Open Jupiter</a>`,
       );
     }
   }
   if (!params.dryRun) {
     lines.push(
       "",
-      `<a href="https://solscan.io/account/${params.positionAddress}">🔗 View on Solscan</a>`,
+      `<a href="https://solscan.io/account/${encodeURIComponent(params.positionAddress)}">View on Solscan</a>`,
     );
   }
   await sendMessage(lines.join("\n"));
@@ -383,10 +401,10 @@ export async function notifyExitStarted(params: {
   const lines = [
     `<b>${params.dryRun ? "EXIT SIMULATION STARTED" : "EXIT STARTED"}</b>`,
     "",
-    `<b>Position:</b> <code>${params.positionAddress}</code>`,
-    `<b>Pool:</b> <code>${params.poolAddress}</code>`,
+    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Pool:</b> ${code(params.poolAddress)}`,
     `<b>Trigger:</b> ${triggerLabel}`,
-    `<b>Reason:</b> ${reason}`,
+      `<b>Reason:</b> ${escapeHtml(reason)}`,
   ];
 
   if (params.pnl) {
@@ -419,8 +437,27 @@ export async function notifyExitFailed(params: {
   const msg = [
     "<b>❌ EXIT FAILED</b>",
     "",
-    `<b>Position:</b> <code>${params.positionAddress}</code>`,
-    `<b>Error:</b> ${params.error.slice(0, 500)}`,
+    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Error:</b> ${escapeHtml(params.error.slice(0, 500))}`,
+  ].join("\n");
+  await sendMessage(msg);
+}
+
+export async function notifyPositionClosedExternally(params: {
+  positionAddress: string;
+  poolAddress: string;
+  reason: string;
+}): Promise<void> {
+  if (!enabled) return;
+  const msg = [
+    "<b>POSITION ALREADY CLOSED</b>",
+    "",
+    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Pool:</b> ${code(params.poolAddress)}`,
+    "<b>Close source:</b> MANUAL_EXTERNAL",
+    `<b>Reason:</b> ${escapeHtml(params.reason)}`,
+    "",
+    "No exit transaction was confirmed by the bot for this close.",
   ].join("\n");
   await sendMessage(msg);
 }
