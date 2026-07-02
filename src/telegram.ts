@@ -3,6 +3,7 @@ import { log, logError } from "./logger";
 import { CONFIG } from "./config";
 import { PNLData } from "./position-fetcher";
 import { SwapResult } from "./jupiter-swap";
+import { escapeHtml } from "./telegram-format";
 import {
   handleMenuCommand,
   handleStatusCommand,
@@ -30,13 +31,6 @@ let enabled = false;
 function formatOptionalNumber(value: number | undefined, decimals?: number): string {
   if (value === undefined || !Number.isFinite(value)) return "unknown";
   return decimals === undefined ? String(value) : value.toFixed(decimals);
-}
-
-function escapeHtml(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
 }
 
 function code(value: unknown): string {

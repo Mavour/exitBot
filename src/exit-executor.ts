@@ -17,15 +17,15 @@ import { ActivePosition } from "./position-fetcher";
 import { autoSwapAfterExit, SwapResult } from "./jupiter-swap";
 import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
+import {
+  classifyClosedAttribution,
+  CloseAttribution,
+  isAlreadyClosedPositionError,
+  SYSTEM_PROGRAM,
+} from "./exit-attribution";
 
 const SEND_TX_TIMEOUT_MS = 30_000;
 const SOL_MINT = "So11111111111111111111111111111111111111112";
-const SYSTEM_PROGRAM = "11111111111111111111111111111111";
-
-export type CloseAttribution =
-  | "BOT_CONFIRMED"
-  | "BOT_UNCONFIRMED_BUT_CLOSED"
-  | "MANUAL_EXTERNAL";
 
 export interface ExitResult {
   success: boolean;
@@ -57,17 +57,6 @@ function buildCUILimitIx(): TransactionInstruction {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function isAlreadyClosedPositionError(err: unknown): boolean {
-  const msg = errorMessage(err);
-  return (
-    /AccountOwnedByWrongProgram/i.test(msg) ||
-    /owned by a different program than expected/i.test(msg) ||
-    /custom program error:\s*0xbbf/i.test(msg) ||
-    /Error Number:\s*3007/i.test(msg) ||
-    msg.includes(SYSTEM_PROGRAM)
-  );
 }
 
 function attachSubmittedSignature(err: Error, signature: string | undefined): Error {
@@ -707,8 +696,7 @@ export async function executeFullExit(
     if (!dryRun && (isAlreadyClosedPositionError(err) || result.txSignatures.length > 0)) {
       const closed = await verifyPositionClosed(position, wallet);
       if (closed) {
-        const attribution: CloseAttribution =
-          result.txSignatures.length > 0 ? "BOT_UNCONFIRMED_BUT_CLOSED" : "MANUAL_EXTERNAL";
+        const attribution = classifyClosedAttribution(result.txSignatures);
         markAlreadyClosed(
           result,
           attribution,
