@@ -438,25 +438,6 @@ export async function startMonitor(): Promise<void> {
 
         inFlightSet.add(posKey);
         try {
-          if (pos.pnl !== null && pos.pnl.pnlPercent <= HARD_STOP_LOSS_PNL_PERCENT) {
-            const peakPnl = positionPeakPnl.get(posKey);
-            log("EXIT", "EXIT CONDITIONS MET", {
-              positionAddress: posKey,
-              triggerType: "HARD_STOP_LOSS",
-              poolAddress: pos.poolAddress.toBase58(),
-              currentPnlSol: pos.pnl.pnlSol,
-              currentPnlPercent: pos.pnl.pnlPercent,
-              peakPnlSol: peakPnl?.pnlSol ?? null,
-              peakPnlPercent: peakPnl?.pnlPercent ?? null,
-              peakPnlAt: peakPnl?.timestamp ?? null,
-              hardStopLossPnlPercent: HARD_STOP_LOSS_PNL_PERCENT,
-              exitBypassesCooldown: true,
-            });
-            tracked.exitTriggerType = "HARD_STOP_LOSS";
-            tracked.exitSignal = undefined;
-            tracked.state = "EXIT_TRIGGERED";
-          }
-
           if (tracked.state === "MONITORING") {
           let closedOnChain = false;
           try {
