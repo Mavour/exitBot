@@ -83,6 +83,8 @@ const wasOOR = new Set<string>();
 const lastIndicatorData = new Map<string, { price: number; rsi: number; bb: BollingerBand }>();
 const positionCreatedAt = new Map<string, number>();
 const positionPeakPnl = new Map<string, { pnlSol: number; pnlPercent: number; timestamp: string }>();
+const lastDepositValueSol = new Map<string, number>();
+const lastDepositChangeMs = new Map<string, number>();
 
 async function isPositionClosedOnChain(positionAddress: string): Promise<boolean> {
   const accountInfo = await withRpcFallback(conn =>
@@ -530,9 +532,22 @@ export async function startMonitor(): Promise<void> {
             continue;
           }
 
+          const prevDepositValueSol = lastDepositValueSol.get(posKey);
+          if (pos.pnl?.depositValueSol && prevDepositValueSol && pos.pnl.depositValueSol > prevDepositValueSol * 1.05) {
+            lastDepositChangeMs.set(posKey, Date.now());
+            log("INFO", "Deposit increased (add liq); HSL grace period started", {
+              positionAddress: posKey.slice(0, 8),
+              previousDeposit: prevDepositValueSol,
+              currentDeposit: pos.pnl.depositValueSol,
+            });
+          }
+          if (pos.pnl?.depositValueSol) lastDepositValueSol.set(posKey, pos.pnl.depositValueSol);
+          const inDepositGrace = lastDepositChangeMs.has(posKey) && (Date.now() - lastDepositChangeMs.get(posKey)!) < 60_000;
+
           const shouldHardStopLossExit =
             pos.pnl !== null &&
-            pos.pnl.pnlPercent <= HARD_STOP_LOSS_PNL_PERCENT;
+            pos.pnl.pnlPercent <= HARD_STOP_LOSS_PNL_PERCENT &&
+            !inDepositGrace;
           const indicatorExitPnlOk =
             pos.pnl !== null &&
             pos.pnl.pnlPercent > CONFIG.indicatorExitMinPnlPercent;
