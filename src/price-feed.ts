@@ -68,7 +68,7 @@ async function fetchGMGNKline(
   throw lastError;
 }
 
-export async function getCandles15m(
+export async function getCandles(
   tokenMint: string,
   limit: number = 60
 ): Promise<Candle[]> {

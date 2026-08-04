@@ -111,6 +111,25 @@ const PARAMS: Record<string, ParamConfig> = {
     errorMsg: "Must be between 0.1%-50%",
     restartRequired: true,
   },
+  hardStopLossEnabled: {
+    envKey: "HARD_STOP_LOSS_ENABLED",
+    label: "Hard Stop-Loss",
+    unit: "",
+    validate: (v) =>
+      ["true", "false", "on", "off", "yes", "no"].includes(v.toLowerCase()),
+    errorMsg: "Send: true or false",
+    restartRequired: true,
+    transform: (v) =>
+      ["true", "on", "yes"].includes(v.toLowerCase()) ? "true" : "false",
+  },
+  hardStopLossPnl: {
+    envKey: "HARD_STOP_LOSS_PNL_PERCENT",
+    label: "Hard SL Level",
+    unit: "%",
+    validate: (v) => +v <= 0 && +v >= -100,
+    errorMsg: "Must be between -100% and 0% (e.g. -10)",
+    restartRequired: true,
+  },
   slippage: {
     envKey: "SLIPPAGE_BPS",
     label: "Slippage",
@@ -182,6 +201,10 @@ function getCurrentValue(paramKey: string): string {
       return String(CONFIG.indicatorExitMinPnlPercent);
     case "trailingDrop":
       return String(CONFIG.trailingDropPercent);
+    case "hardStopLossEnabled":
+      return CONFIG.hardStopLossEnabled ? "true" : "false";
+    case "hardStopLossPnl":
+      return String(CONFIG.hardStopLossPnlPercent);
     case "slippage":
       return String(CONFIG.slippageBps / 100);
     case "dryRun":
@@ -350,6 +373,16 @@ function buildMainMenuKeyboard() {
   ]);
   rows.push([
     {
+      text: `🛑 Hard SL: ${getCurrentValue("hardStopLossEnabled").toUpperCase()} @ ${getCurrentValue("hardStopLossPnl")}%`,
+      callback_data: "param_hardStopLossEnabled",
+    },
+    {
+      text: `SL Level: ${getCurrentValue("hardStopLossPnl")}%`,
+      callback_data: "param_hardStopLossPnl",
+    },
+  ]);
+  rows.push([
+    {
       text: `💧 Slippage: ${getCurrentValue("slippage")}%`,
       callback_data: "param_slippage",
     },
@@ -392,6 +425,7 @@ export async function handleStatusCommand(chatId: number): Promise<void> {
     `Exit cooldown: ${getCurrentValue("exitCooldown")} min`,
     `Indicator min PNL: >${getCurrentValue("indicatorMinPnl")}%`,
     `Trailing: arm=${getCurrentValue("trailingArm")}%, drop=${getCurrentValue("trailingDrop")}%`,
+    `Hard SL: ${getCurrentValue("hardStopLossEnabled")} at ${getCurrentValue("hardStopLossPnl")}%`,
     `Slippage: ${getCurrentValue("slippage")}%`,
   ].join("\n");
   await sendTelegramMessage(msg, String(chatId));

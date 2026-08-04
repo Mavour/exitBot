@@ -153,12 +153,16 @@ pm2 logs dlmm-exit-agent
 
 Agent ngecek tiap 10 detik. Untuk setiap posisi DLMM aktif di dompet kamu:
 
-1. Ambil data 20 candle 15 menit terakhir dari GMGN API
+1. Ambil data candle terakhir dari GMGN API sesuai `CANDLE_TIMEFRAME` (default `15m`, bisa `5m`/`15m`/dll)
 2. Hitung **RSI(2)** + **Bollinger Band(20, 2σ)**
-3. Kalau PNL <= -10% -> execute exit langsung sebagai hard stop-loss
+3. Kalau hard stop-loss aktif dan PNL <= `HARD_STOP_LOSS_PNL_PERCENT` (default -10%) -> execute exit langsung
 4. Kalau RSI >= 90 **DAN** harga > BB Atas -> execute exit
 
-Hard stop-loss ini **hardcoded di -10%**, bukan setting `.env` atau menu Telegram. Trigger ini bypass `EXIT_COOLDOWN_MINUTES` supaya posisi rugi berat langsung ditutup.
+Hard stop-loss bisa diatur lewat `.env` atau menu Telegram `/menu`:
+- `HARD_STOP_LOSS_ENABLED` — `true`/`false` buat nyalain/matiin SL
+- `HARD_STOP_LOSS_PNL_PERCENT` — nilai ambang PNL (contoh: `-10`, `-5`, `-15`)
+
+Trigger SL bypass `EXIT_COOLDOWN_MINUTES` supaya posisi rugi berat langsung ditutup.
 
 **Urutan exit:**
 1. Claim semua unclaimed swap fees
@@ -183,6 +187,9 @@ Hard stop-loss ini **hardcoded di -10%**, bukan setting `.env` atau menu Telegra
 | `RSI_THRESHOLD` | 90 | ❌ | Ambang batas RSI buat exit |
 | `TRAILING_ARM_PERCENT` | 5 | ❌ | PNL minimal untuk mengaktifkan trailing profit |
 | `TRAILING_DROP_PERCENT` | 1.5 | ❌ | Penurunan PNL dari peak yang memicu trailing exit |
+| `HARD_STOP_LOSS_ENABLED` | true | ❌ | `true` = hard stop-loss aktif, `false` = dimatikan |
+| `HARD_STOP_LOSS_PNL_PERCENT` | -10 | ❌ | Ambang PNL hard stop-loss (negatif, contoh `-10`, `-5`) |
+| `CANDLE_TIMEFRAME` | 15m | ❌ | Timeframe candle indikator: 1m, 3m, 5m, 15m, 30m, 1h, 4h |
 | `BB_PERIOD` | 20 | ❌ | Period Bollinger Band |
 | `BB_STD_DEV` | 2 | ❌ | Standar deviasi BB |
 | `PRIORITY_FEE_MICROLAMPORTS` | 100000 | ❌ | Priority fee Solana |
@@ -199,7 +206,7 @@ Hard stop-loss ini **hardcoded di -10%**, bukan setting `.env` atau menu Telegra
 - Pastikan dompet punya **≥ 0.01 SOL** buat fee transaksi
 - Agent bakal EXIT SEMUA posisi aktif yang memenuhi kondisi — bukan cuma 1
 - RSI(2) itu sensitif — bisa trigger lebih sering dari RSI biasa
-- Kalau ada error `Insufficient candle data` — artinya token baru banget (perlu 20 candle 15m ≈ 5 jam data). Sabar aja nunggu
+- Kalau ada error `Insufficient candle data` — artinya token baru banget (perlu 20 candle sesuai timeframe ≈ mis. 5 jam data untuk 15m). Sabar aja nunggu
 - Private key jangan pernah dishare atau di-commit ke GitHub
 
 ---

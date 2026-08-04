@@ -20,7 +20,6 @@ import {
 const TELEGRAM_API = "https://api.telegram.org";
 const LOCK_FILE = "/tmp/dlmm-exit-agent-menu.lock";
 const OFFSET_FILE = "/tmp/dlmm-exit-agent-offset.txt";
-const HARD_STOP_LOSS_PNL_PERCENT = -10;
 const TELEGRAM_LONG_POLL_TIMEOUT_SECONDS = 25;
 const TELEGRAM_FETCH_TIMEOUT_MS = 35_000;
 const TELEGRAM_POLL_IDLE_DELAY_MS = 500;
@@ -138,6 +137,8 @@ export async function notifyAgentStart(params: {
   indicatorExitMinPnlPercent: number;
   trailingArmPercent: number;
   trailingDropPercent: number;
+  hardStopLossEnabled: boolean;
+  hardStopLossPnlPercent: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -150,6 +151,7 @@ export async function notifyAgentStart(params: {
     `Exit cooldown: ${(params.exitCooldownMs / 60_000).toFixed(0)} min`,
     `Indicator min PNL: > ${params.indicatorExitMinPnlPercent}%`,
     `Trailing: arm ${params.trailingArmPercent}% / drop ${params.trailingDropPercent}%`,
+    `Hard SL: ${params.hardStopLossEnabled ? `ON ${params.hardStopLossPnlPercent}%` : "OFF"}`,
   ].join("\n");
   await sendMessage(msg);
 }
@@ -282,7 +284,7 @@ export async function notifyExitSuccess(params: {
         ? "Trailing Profit"
         : "RSI+BB Indicator";
     const reason = isHardStopLoss
-      ? `PNL <= ${HARD_STOP_LOSS_PNL_PERCENT}% hard stop-loss`
+      ? `PNL <= ${CONFIG.hardStopLossPnlPercent}% hard stop-loss (${CONFIG.hardStopLossEnabled ? "ON" : "OFF"})`
       : isTrailing
         ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
         : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${params.bbExitBand ?? CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
@@ -387,7 +389,7 @@ export async function notifyExitStarted(params: {
       ? "Trailing Profit"
       : "RSI+BB Indicator";
   const reason = isHardStopLoss
-    ? `PNL <= ${HARD_STOP_LOSS_PNL_PERCENT}% hard stop-loss`
+    ? `PNL <= ${CONFIG.hardStopLossPnlPercent}% hard stop-loss (${CONFIG.hardStopLossEnabled ? "ON" : "OFF"})`
     : isTrailing
       ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
       : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;

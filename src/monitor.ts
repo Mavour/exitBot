@@ -6,7 +6,7 @@ import {
   ActivePosition,
 } from "./position-fetcher";
 import {
-  getCandles15m,
+  getCandles,
 } from "./price-feed";
 import { checkExitConditions, BollingerBand } from "./indicators";
 import { executeFullExit, ExitResult } from "./exit-executor";
@@ -34,7 +34,6 @@ import {
 
 const REQUIRED_CANDLES = 60;
 const POSITION_REFETCH_INTERVAL = 1;
-const HARD_STOP_LOSS_PNL_PERCENT = -10;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
 type ExitTriggerType = "HARD_STOP_LOSS" | "RSI_BB" | "TRAILING_PROFIT";
@@ -327,6 +326,8 @@ export async function startMonitor(): Promise<void> {
         indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
         trailingArmPercent: CONFIG.trailingArmPercent,
         trailingDropPercent: CONFIG.trailingDropPercent,
+        hardStopLossEnabled: CONFIG.hardStopLossEnabled,
+        hardStopLossPnlPercent: CONFIG.hardStopLossPnlPercent,
       }),
     "agent start"
   );
@@ -341,6 +342,8 @@ export async function startMonitor(): Promise<void> {
     indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
     trailingArmPercent: CONFIG.trailingArmPercent,
     trailingDropPercent: CONFIG.trailingDropPercent,
+    hardStopLossEnabled: CONFIG.hardStopLossEnabled,
+    hardStopLossPnlPercent: CONFIG.hardStopLossPnlPercent,
   });
 
   // Main loop
@@ -462,7 +465,7 @@ export async function startMonitor(): Promise<void> {
 
           handleRangeNotifications(pos, posKey);
 
-          const candles = await getCandles15m(
+          const candles = await getCandles(
             pos.tokenMint,
             REQUIRED_CANDLES
           );
@@ -545,8 +548,9 @@ export async function startMonitor(): Promise<void> {
           const inDepositGrace = lastDepositChangeMs.has(posKey) && (Date.now() - lastDepositChangeMs.get(posKey)!) < 60_000;
 
           const shouldHardStopLossExit =
+            CONFIG.hardStopLossEnabled &&
             pos.pnl !== null &&
-            pos.pnl.pnlPercent <= HARD_STOP_LOSS_PNL_PERCENT &&
+            pos.pnl.pnlPercent <= CONFIG.hardStopLossPnlPercent &&
             !inDepositGrace;
           const indicatorExitPnlOk =
             pos.pnl !== null &&
@@ -595,7 +599,8 @@ export async function startMonitor(): Promise<void> {
               trailingArmPercent: CONFIG.trailingArmPercent,
               trailingDropThreshold: CONFIG.trailingDropPercent,
               indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
-              hardStopLossPnlPercent: HARD_STOP_LOSS_PNL_PERCENT,
+              hardStopLossEnabled: CONFIG.hardStopLossEnabled,
+              hardStopLossPnlPercent: CONFIG.hardStopLossPnlPercent,
             });
             continue;
           }
@@ -620,7 +625,8 @@ export async function startMonitor(): Promise<void> {
               trailingArmPercent: CONFIG.trailingArmPercent,
               trailingDropThreshold: CONFIG.trailingDropPercent,
               indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
-              hardStopLossPnlPercent: HARD_STOP_LOSS_PNL_PERCENT,
+              hardStopLossEnabled: CONFIG.hardStopLossEnabled,
+              hardStopLossPnlPercent: CONFIG.hardStopLossPnlPercent,
               exitBypassesCooldown,
             });
             tracked.exitTriggerType = exitTrigger;

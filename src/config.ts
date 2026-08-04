@@ -72,6 +72,8 @@ export const CONFIG = {
   indicatorExitMinPnlPercent: parseNumber("INDICATOR_EXIT_MIN_PNL_PERCENT", 0.1, 0),
   trailingArmPercent: parseNumber("TRAILING_ARM_PERCENT", 5, 0),
   trailingDropPercent: parseNumber("TRAILING_DROP_PERCENT", 1.5, 0),
+  hardStopLossEnabled: parseBool("HARD_STOP_LOSS_ENABLED", true),
+  hardStopLossPnlPercent: parseNumber("HARD_STOP_LOSS_PNL_PERCENT", -10),
   priorityFeeMicrolamports: parseNumber(
     "PRIORITY_FEE_MICROLAMPORTS",
     0,
