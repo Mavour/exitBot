@@ -139,6 +139,10 @@ export async function notifyAgentStart(params: {
   trailingDropPercent: number;
   hardStopLossEnabled: boolean;
   hardStopLossPnlPercent: number;
+  macdEnabled: boolean;
+  macdFastPeriod: number;
+  macdSlowPeriod: number;
+  macdSignalPeriod: number;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
@@ -152,6 +156,7 @@ export async function notifyAgentStart(params: {
     `Indicator min PNL: > ${params.indicatorExitMinPnlPercent}%`,
     `Trailing: arm ${params.trailingArmPercent}% / drop ${params.trailingDropPercent}%`,
     `Hard SL: ${params.hardStopLossEnabled ? `ON ${params.hardStopLossPnlPercent}%` : "OFF"}`,
+    `MACD rule: ${params.macdEnabled ? `ON (${params.macdFastPeriod}/${params.macdSlowPeriod}/${params.macdSignalPeriod})` : "OFF"}`,
   ].join("\n");
   await sendMessage(msg);
 }
@@ -249,11 +254,14 @@ export async function notifyExitSuccess(params: {
   txSignatures: string[];
   dryRun: boolean;
   pnl: PNLData | null;
-  trigger?: "HARD_STOP_LOSS" | "RSI_BB" | "TRAILING_PROFIT";
+  trigger?: "HARD_STOP_LOSS" | "RSI_BB" | "RSI_MACD" | "TRAILING_PROFIT";
   rsi?: number;
   price?: number;
   bbExitBand?: "upper" | "middle" | "lower";
   bbExitPrice?: number;
+  macdLine?: number;
+  macdSignal?: number;
+  macdHistogram?: number;
   peakPnlSol?: number;
   peakPnlPercent?: number;
   trailingDropPercent?: number;
@@ -278,16 +286,21 @@ export async function notifyExitSuccess(params: {
   if (params.trigger) {
     const isTrailing = params.trigger === "TRAILING_PROFIT";
     const isHardStopLoss = params.trigger === "HARD_STOP_LOSS";
+    const isMacd = params.trigger === "RSI_MACD";
     const triggerLabel = isHardStopLoss
       ? "Hard Stop-Loss"
       : isTrailing
         ? "Trailing Profit"
-        : "RSI+BB Indicator";
+        : isMacd
+          ? "RSI+MACD"
+          : "RSI+BB Indicator";
     const reason = isHardStopLoss
       ? `PNL <= ${CONFIG.hardStopLossPnlPercent}% hard stop-loss (${CONFIG.hardStopLossEnabled ? "ON" : "OFF"})`
       : isTrailing
         ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
-        : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${params.bbExitBand ?? CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
+        : isMacd
+          ? `RSI >= ${CONFIG.rsiThreshold} and MACD histogram green`
+          : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${params.bbExitBand ?? CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
 
     lines.push(
       `<b>Trigger:</b> ${triggerLabel}`,
@@ -295,6 +308,11 @@ export async function notifyExitSuccess(params: {
     );
     if (params.rsi !== undefined) lines.push(`<b>RSI(2):</b> ${params.rsi.toFixed(2)}`);
     if (params.price !== undefined) lines.push(`<b>Price:</b> ${params.price}`);
+    if (isMacd) {
+      if (params.macdLine !== undefined) lines.push(`<b>MACD:</b> ${params.macdLine.toFixed(8)}`);
+      if (params.macdSignal !== undefined) lines.push(`<b>MACD Signal:</b> ${params.macdSignal.toFixed(8)}`);
+      if (params.macdHistogram !== undefined) lines.push(`<b>MACD Histogram:</b> ${params.macdHistogram.toFixed(8)}`);
+    }
     if (params.bbExitBand && params.bbExitPrice !== undefined) {
       lines.push(`<b>BB ${params.bbExitBand}:</b> ${params.bbExitPrice}`);
     }
@@ -372,7 +390,7 @@ export async function notifyExitSuccess(params: {
 export async function notifyExitStarted(params: {
   positionAddress: string;
   poolAddress: string;
-  trigger: "HARD_STOP_LOSS" | "RSI_BB" | "TRAILING_PROFIT";
+  trigger: "HARD_STOP_LOSS" | "RSI_BB" | "RSI_MACD" | "TRAILING_PROFIT";
   pnl: PNLData | null;
   peakPnlSol?: number;
   peakPnlPercent?: number;
@@ -383,16 +401,21 @@ export async function notifyExitStarted(params: {
 
   const isTrailing = params.trigger === "TRAILING_PROFIT";
   const isHardStopLoss = params.trigger === "HARD_STOP_LOSS";
+  const isMacd = params.trigger === "RSI_MACD";
   const triggerLabel = isHardStopLoss
     ? "Hard Stop-Loss"
     : isTrailing
       ? "Trailing Profit"
-      : "RSI+BB Indicator";
+      : isMacd
+        ? "RSI+MACD"
+        : "RSI+BB Indicator";
   const reason = isHardStopLoss
     ? `PNL <= ${CONFIG.hardStopLossPnlPercent}% hard stop-loss (${CONFIG.hardStopLossEnabled ? "ON" : "OFF"})`
     : isTrailing
       ? `PNL dropped ${(params.trailingDropPercent ?? 0).toFixed(4)}% from peak after trailing armed at ${CONFIG.trailingArmPercent}%`
-      : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
+      : isMacd
+        ? `RSI >= ${CONFIG.rsiThreshold} and MACD histogram green`
+        : `RSI >= ${CONFIG.rsiThreshold}, price > BB ${CONFIG.bbExitBand}, and PNL > ${CONFIG.indicatorExitMinPnlPercent}%`;
 
   const lines = [
     `<b>${params.dryRun ? "EXIT SIMULATION STARTED" : "EXIT STARTED"}</b>`,

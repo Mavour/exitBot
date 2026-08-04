@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+process.env.RPC_URL = process.env.RPC_URL || "https://api.mainnet-beta.solana.com";
+process.env.WALLET_PRIVATE_KEY = process.env.WALLET_PRIVATE_KEY || "test-private-key";
+
 async function loadExitExecutor() {
   return import("../src/exit-attribution");
 }
@@ -52,4 +55,28 @@ test("escapes Telegram HTML dynamic text", async () => {
     escapeHtml('Simulation failed <tag attr="x"> & retry'),
     'Simulation failed &lt;tag attr="x"&gt; &amp; retry'
   );
+});
+
+test("MACD histogram is green on an uptrend", async () => {
+  const { calculateMACD } = await import("../src/indicators");
+  const closes: number[] = [];
+  for (let i = 1; i <= 120; i++) closes.push(100 + i * i);
+  const macd = calculateMACD(closes, 12, 26, 9);
+  assert.ok(macd.histogram > 0, `expected green histogram, got ${macd.histogram}`);
+  assert.ok(macd.macdLine > macd.signalLine);
+});
+
+test("MACD histogram is red on a downtrend", async () => {
+  const { calculateMACD } = await import("../src/indicators");
+  const closes: number[] = [];
+  for (let i = 1; i <= 120; i++) closes.push(20000 - i * i);
+  const macd = calculateMACD(closes, 12, 26, 9);
+  assert.ok(macd.histogram < 0, `expected red histogram, got ${macd.histogram}`);
+  assert.ok(macd.macdLine < macd.signalLine);
+});
+
+test("MACD requires enough data points", async () => {
+  const { calculateMACD } = await import("../src/indicators");
+  const closes = [100, 101, 102, 103, 104, 105];
+  assert.throws(() => calculateMACD(closes, 12, 26, 9));
 });

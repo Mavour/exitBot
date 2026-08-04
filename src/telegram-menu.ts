@@ -130,6 +130,41 @@ const PARAMS: Record<string, ParamConfig> = {
     errorMsg: "Must be between -100% and 0% (e.g. -10)",
     restartRequired: true,
   },
+  macdEnabled: {
+    envKey: "MACD_ENABLED",
+    label: "MACD Exit Rule",
+    unit: "",
+    validate: (v) =>
+      ["true", "false", "on", "off", "yes", "no"].includes(v.toLowerCase()),
+    errorMsg: "Send: true or false",
+    restartRequired: true,
+    transform: (v) =>
+      ["true", "on", "yes"].includes(v.toLowerCase()) ? "true" : "false",
+  },
+  macdFast: {
+    envKey: "MACD_FAST_PERIOD",
+    label: "MACD Fast",
+    unit: "",
+    validate: (v) => Number.isInteger(+v) && +v >= 2 && +v <= 50,
+    errorMsg: "Must be integer between 2-50",
+    restartRequired: true,
+  },
+  macdSlow: {
+    envKey: "MACD_SLOW_PERIOD",
+    label: "MACD Slow",
+    unit: "",
+    validate: (v) => Number.isInteger(+v) && +v >= 5 && +v <= 100,
+    errorMsg: "Must be integer between 5-100",
+    restartRequired: true,
+  },
+  macdSignal: {
+    envKey: "MACD_SIGNAL_PERIOD",
+    label: "MACD Signal",
+    unit: "",
+    validate: (v) => Number.isInteger(+v) && +v >= 1 && +v <= 50,
+    errorMsg: "Must be integer between 1-50",
+    restartRequired: true,
+  },
   slippage: {
     envKey: "SLIPPAGE_BPS",
     label: "Slippage",
@@ -205,6 +240,14 @@ function getCurrentValue(paramKey: string): string {
       return CONFIG.hardStopLossEnabled ? "true" : "false";
     case "hardStopLossPnl":
       return String(CONFIG.hardStopLossPnlPercent);
+    case "macdEnabled":
+      return CONFIG.macdEnabled ? "true" : "false";
+    case "macdFast":
+      return String(CONFIG.macdFastPeriod);
+    case "macdSlow":
+      return String(CONFIG.macdSlowPeriod);
+    case "macdSignal":
+      return String(CONFIG.macdSignalPeriod);
     case "slippage":
       return String(CONFIG.slippageBps / 100);
     case "dryRun":
@@ -383,6 +426,12 @@ function buildMainMenuKeyboard() {
   ]);
   rows.push([
     {
+      text: `📊 MACD: ${getCurrentValue("macdEnabled").toUpperCase()} (${getCurrentValue("macdFast")}/${getCurrentValue("macdSlow")}/${getCurrentValue("macdSignal")})`,
+      callback_data: "param_macdEnabled",
+    },
+  ]);
+  rows.push([
+    {
       text: `💧 Slippage: ${getCurrentValue("slippage")}%`,
       callback_data: "param_slippage",
     },
@@ -426,6 +475,7 @@ export async function handleStatusCommand(chatId: number): Promise<void> {
     `Indicator min PNL: >${getCurrentValue("indicatorMinPnl")}%`,
     `Trailing: arm=${getCurrentValue("trailingArm")}%, drop=${getCurrentValue("trailingDrop")}%`,
     `Hard SL: ${getCurrentValue("hardStopLossEnabled")} at ${getCurrentValue("hardStopLossPnl")}%`,
+    `MACD: ${getCurrentValue("macdEnabled")} (${getCurrentValue("macdFast")}/${getCurrentValue("macdSlow")}/${getCurrentValue("macdSignal")})`,
     `Slippage: ${getCurrentValue("slippage")}%`,
   ].join("\n");
   await sendTelegramMessage(msg, String(chatId));

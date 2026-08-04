@@ -36,7 +36,7 @@ const REQUIRED_CANDLES = 60;
 const POSITION_REFETCH_INTERVAL = 1;
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
-type ExitTriggerType = "HARD_STOP_LOSS" | "RSI_BB" | "TRAILING_PROFIT";
+type ExitTriggerType = "HARD_STOP_LOSS" | "RSI_BB" | "RSI_MACD" | "TRAILING_PROFIT";
 type BBExitBand = "upper" | "middle" | "lower";
 
 interface ExitSignalContext {
@@ -48,6 +48,9 @@ interface ExitSignalContext {
   peakPnlSol?: number;
   peakPnlPercent?: number;
   trailingDropPercent?: number;
+  macdLine?: number;
+  macdSignal?: number;
+  macdHistogram?: number;
 }
 
 function safeNotify(fn: () => Promise<void>, label: string): void {
@@ -328,6 +331,10 @@ export async function startMonitor(): Promise<void> {
         trailingDropPercent: CONFIG.trailingDropPercent,
         hardStopLossEnabled: CONFIG.hardStopLossEnabled,
         hardStopLossPnlPercent: CONFIG.hardStopLossPnlPercent,
+        macdEnabled: CONFIG.macdEnabled,
+        macdFastPeriod: CONFIG.macdFastPeriod,
+        macdSlowPeriod: CONFIG.macdSlowPeriod,
+        macdSignalPeriod: CONFIG.macdSignalPeriod,
       }),
     "agent start"
   );
@@ -344,6 +351,10 @@ export async function startMonitor(): Promise<void> {
     trailingDropPercent: CONFIG.trailingDropPercent,
     hardStopLossEnabled: CONFIG.hardStopLossEnabled,
     hardStopLossPnlPercent: CONFIG.hardStopLossPnlPercent,
+    macdEnabled: CONFIG.macdEnabled,
+    macdFastPeriod: CONFIG.macdFastPeriod,
+    macdSlowPeriod: CONFIG.macdSlowPeriod,
+    macdSignalPeriod: CONFIG.macdSignalPeriod,
   });
 
   // Main loop
@@ -504,6 +515,10 @@ export async function startMonitor(): Promise<void> {
             bbLower: snapshot.bb.lower.toFixed(8),
             bbExitBand: CONFIG.bbExitBand,
             bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
+            macdLine: snapshot.macd.macdLine.toFixed(8),
+            macdSignal: snapshot.macd.signalLine.toFixed(8),
+            macdHistogram: snapshot.macd.histogram.toFixed(8),
+            macdGreen: snapshot.shouldExitMacd,
             price: snapshot.price.toFixed(8),
             shouldExit: snapshot.shouldExit,
             isOORRight: pos.isOORRight,
@@ -556,22 +571,30 @@ export async function startMonitor(): Promise<void> {
             pos.pnl !== null &&
             pos.pnl.pnlPercent > CONFIG.indicatorExitMinPnlPercent;
           const shouldIndicatorExit = snapshot.shouldExit && indicatorExitPnlOk;
+          const shouldMacdExit =
+            CONFIG.macdEnabled &&
+            snapshot.shouldExitMacd &&
+            indicatorExitPnlOk;
           const exitTrigger = shouldHardStopLossExit
             ? "HARD_STOP_LOSS"
             : shouldTrailingExit
               ? "TRAILING_PROFIT"
               : shouldIndicatorExit
                 ? "RSI_BB"
-                : null;
+                : shouldMacdExit
+                  ? "RSI_MACD"
+                  : null;
           const exitBypassesCooldown = exitTrigger === "HARD_STOP_LOSS";
 
-          if (snapshot.shouldExit && !indicatorExitPnlOk) {
+          if ((snapshot.shouldExit || snapshot.shouldExitMacd) && !indicatorExitPnlOk) {
             log("INFO", "Indicator exit signal ignored below minimum PNL", {
               positionAddress: posKey,
               rsi: snapshot.rsi.toFixed(2),
               price: snapshot.price.toFixed(8),
               bbExitBand: CONFIG.bbExitBand,
               bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
+              macdHistogram: snapshot.macd.histogram.toFixed(8),
+              macdGreen: snapshot.shouldExitMacd,
               currentPnlSol: pos.pnl?.pnlSol ?? null,
               currentPnlPercent: pos.pnl?.pnlPercent ?? null,
               indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
@@ -627,6 +650,10 @@ export async function startMonitor(): Promise<void> {
               indicatorExitMinPnlPercent: CONFIG.indicatorExitMinPnlPercent,
               hardStopLossEnabled: CONFIG.hardStopLossEnabled,
               hardStopLossPnlPercent: CONFIG.hardStopLossPnlPercent,
+              macdEnabled: CONFIG.macdEnabled,
+              macdLine: snapshot.macd.macdLine.toFixed(8),
+              macdSignal: snapshot.macd.signalLine.toFixed(8),
+              macdHistogram: snapshot.macd.histogram.toFixed(8),
               exitBypassesCooldown,
             });
             tracked.exitTriggerType = exitTrigger;
@@ -639,6 +666,9 @@ export async function startMonitor(): Promise<void> {
               peakPnlSol: peakPnl?.pnlSol,
               peakPnlPercent: peakPnl?.pnlPercent,
               trailingDropPercent,
+              macdLine: snapshot.macd.macdLine,
+              macdSignal: snapshot.macd.signalLine,
+              macdHistogram: snapshot.macd.histogram,
             };
             tracked.state = "EXIT_TRIGGERED";
           }
@@ -725,6 +755,9 @@ export async function startMonitor(): Promise<void> {
                   price: exitSignal?.price,
                   bbExitBand: exitSignal?.bbExitBand,
                   bbExitPrice: exitSignal?.bbExitPrice,
+                  macdLine: exitSignal?.macdLine,
+                  macdSignal: exitSignal?.macdSignal,
+                  macdHistogram: exitSignal?.macdHistogram,
                   peakPnlSol: exitSignal?.peakPnlSol,
                   peakPnlPercent: exitSignal?.peakPnlPercent,
                   trailingDropPercent: exitSignal?.trailingDropPercent,

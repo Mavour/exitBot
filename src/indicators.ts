@@ -7,10 +7,18 @@ export interface BollingerBand {
   lower: number;
 }
 
+export interface MACDData {
+  macdLine: number;
+  signalLine: number;
+  histogram: number;
+}
+
 export interface IndicatorSnapshot {
   shouldExit: boolean;
+  shouldExitMacd: boolean;
   rsi: number;
   bb: BollingerBand;
+  macd: MACDData;
   price: number;
   timestamp: number;
 }
@@ -83,14 +91,75 @@ export function calculateBB(
   };
 }
 
+function calculateEMA(values: number[], period: number): number[] {
+  if (values.length < period) {
+    throw new Error(
+      `EMA requires at least ${period} data points, got ${values.length}`
+    );
+  }
+
+  const ema: number[] = new Array(values.length).fill(NaN);
+  let sum = 0;
+  for (let i = 0; i < period; i++) sum += values[i];
+  ema[period - 1] = sum / period;
+
+  const k = 2 / (period + 1);
+  for (let i = period; i < values.length; i++) {
+    ema[i] = values[i] * k + ema[i - 1] * (1 - k);
+  }
+  return ema;
+}
+
+export function calculateMACD(
+  closes: number[],
+  fastPeriod: number,
+  slowPeriod: number,
+  signalPeriod: number
+): MACDData {
+  const emaFast = calculateEMA(closes, fastPeriod);
+  const emaSlow = calculateEMA(closes, slowPeriod);
+
+  const macdLine: number[] = new Array(closes.length).fill(NaN);
+  for (let i = 0; i < closes.length; i++) {
+    if (Number.isFinite(emaFast[i]) && Number.isFinite(emaSlow[i])) {
+      macdLine[i] = emaFast[i] - emaSlow[i];
+    }
+  }
+
+  const firstValid = macdLine.findIndex((v) => Number.isFinite(v));
+  if (firstValid === -1) {
+    throw new Error("MACD could not be computed");
+  }
+
+  const valid = macdLine.slice(firstValid);
+  const signalValid = calculateEMA(valid, signalPeriod);
+  const signalLine: number[] = new Array(closes.length).fill(NaN);
+  for (let i = 0; i < valid.length; i++) {
+    signalLine[firstValid + i] = signalValid[i];
+  }
+
+  const last = closes.length - 1;
+  const macd = macdLine[last];
+  const sig = signalLine[last];
+  const histogram = Number.isFinite(macd) && Number.isFinite(sig) ? macd - sig : NaN;
+
+  if (!Number.isFinite(macd) || !Number.isFinite(sig) || !Number.isFinite(histogram)) {
+    throw new Error("MACD value is NaN");
+  }
+
+  return { macdLine: macd, signalLine: sig, histogram };
+}
+
 export function checkExitConditions(candles: Candle[]): IndicatorSnapshot {
   const closes = candles.map((c) => c.close);
   const lastCandle = candles[candles.length - 1];
   const price = lastCandle.close;
   const fallback: IndicatorSnapshot = {
     shouldExit: false,
+    shouldExitMacd: false,
     rsi: 0,
     bb: { upper: 0, middle: 0, lower: 0 },
+    macd: { macdLine: 0, signalLine: 0, histogram: 0 },
     price,
     timestamp: lastCandle.timestamp,
   };
@@ -111,13 +180,29 @@ export function checkExitConditions(candles: Candle[]): IndicatorSnapshot {
     return fallback;
   }
 
+  let macd: MACDData;
+  try {
+    macd = calculateMACD(
+      closes,
+      CONFIG.macdFastPeriod,
+      CONFIG.macdSlowPeriod,
+      CONFIG.macdSignalPeriod
+    );
+  } catch {
+    return fallback;
+  }
+
   const bbExitPrice = bb[CONFIG.bbExitBand];
   const shouldExit = rsiValue >= CONFIG.rsiThreshold && price > bbExitPrice;
+  const shouldExitMacd =
+    rsiValue >= CONFIG.rsiThreshold && macd.histogram > 0;
 
   return {
     shouldExit,
+    shouldExitMacd,
     rsi: rsiValue,
     bb,
+    macd,
     price,
     timestamp: lastCandle.timestamp,
   };

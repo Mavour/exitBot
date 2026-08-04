@@ -74,6 +74,10 @@ export const CONFIG = {
   trailingDropPercent: parseNumber("TRAILING_DROP_PERCENT", 1.5, 0),
   hardStopLossEnabled: parseBool("HARD_STOP_LOSS_ENABLED", true),
   hardStopLossPnlPercent: parseNumber("HARD_STOP_LOSS_PNL_PERCENT", -10),
+  macdEnabled: parseBool("MACD_ENABLED", true),
+  macdFastPeriod: parseNumber("MACD_FAST_PERIOD", 12, 1),
+  macdSlowPeriod: parseNumber("MACD_SLOW_PERIOD", 26, 2),
+  macdSignalPeriod: parseNumber("MACD_SIGNAL_PERIOD", 9, 1),
   priorityFeeMicrolamports: parseNumber(
     "PRIORITY_FEE_MICROLAMPORTS",
     0,

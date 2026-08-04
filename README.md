@@ -154,13 +154,18 @@ pm2 logs dlmm-exit-agent
 Agent ngecek tiap 10 detik. Untuk setiap posisi DLMM aktif di dompet kamu:
 
 1. Ambil data candle terakhir dari GMGN API sesuai `CANDLE_TIMEFRAME` (default `15m`, bisa `5m`/`15m`/dll)
-2. Hitung **RSI(2)** + **Bollinger Band(20, 2σ)**
+2. Hitung **RSI(2)** + **Bollinger Band(20, 2σ)** + **MACD(12, 26, 9)**
 3. Kalau hard stop-loss aktif dan PNL <= `HARD_STOP_LOSS_PNL_PERCENT` (default -10%) -> execute exit langsung
-4. Kalau RSI >= 90 **DAN** harga > BB Atas -> execute exit
+4. Kalau RSI >= 90 **DAN** harga > BB Atas -> execute exit (rule **BB+RSI**)
+5. Kalau RSI >= 90 **DAN** MACD histogram hijau (bar positif) -> execute exit (rule **MACD+RSI**)
 
 Hard stop-loss bisa diatur lewat `.env` atau menu Telegram `/menu`:
 - `HARD_STOP_LOSS_ENABLED` — `true`/`false` buat nyalain/matiin SL
 - `HARD_STOP_LOSS_PNL_PERCENT` — nilai ambang PNL (contoh: `-10`, `-5`, `-15`)
+
+Rule MACD+RSI bisa diatur lewat `.env` atau `/menu`:
+- `MACD_ENABLED` — `true`/`false` buat nyalain/matiin rule
+- `MACD_FAST_PERIOD` (12), `MACD_SLOW_PERIOD` (26), `MACD_SIGNAL_PERIOD` (9)
 
 Trigger SL bypass `EXIT_COOLDOWN_MINUTES` supaya posisi rugi berat langsung ditutup.
 
@@ -189,6 +194,10 @@ Trigger SL bypass `EXIT_COOLDOWN_MINUTES` supaya posisi rugi berat langsung ditu
 | `TRAILING_DROP_PERCENT` | 1.5 | ❌ | Penurunan PNL dari peak yang memicu trailing exit |
 | `HARD_STOP_LOSS_ENABLED` | true | ❌ | `true` = hard stop-loss aktif, `false` = dimatikan |
 | `HARD_STOP_LOSS_PNL_PERCENT` | -10 | ❌ | Ambang PNL hard stop-loss (negatif, contoh `-10`, `-5`) |
+| `MACD_ENABLED` | true | ❌ | `true` = rule exit MACD+RSI aktif, `false` = dimatikan |
+| `MACD_FAST_PERIOD` | 12 | ❌ | Periode EMA cepat MACD |
+| `MACD_SLOW_PERIOD` | 26 | ❌ | Periode EMA lambat MACD |
+| `MACD_SIGNAL_PERIOD` | 9 | ❌ | Periode EMA signal MACD |
 | `CANDLE_TIMEFRAME` | 15m | ❌ | Timeframe candle indikator: 1m, 3m, 5m, 15m, 30m, 1h, 4h |
 | `BB_PERIOD` | 20 | ❌ | Period Bollinger Band |
 | `BB_STD_DEV` | 2 | ❌ | Standar deviasi BB |
