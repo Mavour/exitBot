@@ -265,6 +265,7 @@ export async function notifyExitSuccess(params: {
   peakPnlSol?: number;
   peakPnlPercent?: number;
   trailingDropPercent?: number;
+  candleDataSource?: "GMGN" | "DEXPAPRIKA";
   swapResult: SwapResult | null;
   swapError?: string;
   closeAttribution?: "BOT_CONFIRMED" | "BOT_UNCONFIRMED_BUT_CLOSED" | "MANUAL_EXTERNAL";
@@ -325,6 +326,10 @@ export async function notifyExitSuccess(params: {
         `<b>Trailing drop:</b> ${(params.trailingDropPercent ?? 0).toFixed(4)}%`,
       );
     }
+  }
+
+  if (params.candleDataSource === "DEXPAPRIKA") {
+    lines.push("", "⚠️ Data candle dari fallback DexPaprika (GMGN rate limited)");
   }
 
   lines.push(
@@ -395,6 +400,7 @@ export async function notifyExitStarted(params: {
   peakPnlSol?: number;
   peakPnlPercent?: number;
   trailingDropPercent?: number;
+  candleDataSource?: "GMGN" | "DEXPAPRIKA";
   dryRun: boolean;
 }): Promise<void> {
   if (!enabled) return;
@@ -425,6 +431,10 @@ export async function notifyExitStarted(params: {
     `<b>Trigger:</b> ${triggerLabel}`,
       `<b>Reason:</b> ${escapeHtml(reason)}`,
   ];
+
+  if (params.candleDataSource === "DEXPAPRIKA") {
+    lines.push("⚠️ Data candle dari fallback DexPaprika (GMGN rate limited)");
+  }
 
   if (params.pnl) {
     const prefix = params.pnl.pnlSol >= 0 ? "+" : "";

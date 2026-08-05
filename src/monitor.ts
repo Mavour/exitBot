@@ -51,6 +51,7 @@ interface ExitSignalContext {
   macdLine?: number;
   macdSignal?: number;
   macdHistogram?: number;
+  candleDataSource?: "GMGN" | "DEXPAPRIKA";
 }
 
 function safeNotify(fn: () => Promise<void>, label: string): void {
@@ -476,14 +477,15 @@ export async function startMonitor(): Promise<void> {
 
           handleRangeNotifications(pos, posKey);
 
-          const candles = await getCandles(
+          const { candles, source } = await getCandles(
             pos.tokenMint,
-            REQUIRED_CANDLES
+            REQUIRED_CANDLES,
+            pos.poolAddress.toBase58()
           );
 
           const currentPrice = candles[candles.length - 1].close;
 
-          const snapshot = checkExitConditions(candles);
+          const snapshot = checkExitConditions(candles, source);
 
           lastIndicatorData.set(posKey, {
             price: currentPrice,
@@ -669,6 +671,7 @@ export async function startMonitor(): Promise<void> {
               macdLine: snapshot.macd.macdLine,
               macdSignal: snapshot.macd.signalLine,
               macdHistogram: snapshot.macd.histogram,
+              candleDataSource: snapshot.candleDataSource,
             };
             tracked.state = "EXIT_TRIGGERED";
           }
@@ -710,6 +713,7 @@ export async function startMonitor(): Promise<void> {
               peakPnlSol: peakPnl?.pnlSol,
               peakPnlPercent: peakPnl?.pnlPercent,
               trailingDropPercent: exitSignal?.trailingDropPercent,
+              candleDataSource: exitSignal?.candleDataSource,
               dryRun: CONFIG.dryRun,
             }),
           "exit started"
@@ -761,6 +765,7 @@ export async function startMonitor(): Promise<void> {
                   peakPnlSol: exitSignal?.peakPnlSol,
                   peakPnlPercent: exitSignal?.peakPnlPercent,
                   trailingDropPercent: exitSignal?.trailingDropPercent,
+                  candleDataSource: exitSignal?.candleDataSource,
                   swapResult: result.swapResult,
                   swapError: result.swapError,
                   closeAttribution: result.closeAttribution,
@@ -794,6 +799,7 @@ export async function startMonitor(): Promise<void> {
                   swapSuccess: result.swapResult?.success ?? null,
                   swapReason: result.swapError ?? null,
                   closeAttribution: result.closeAttribution,
+                  candleDataSource: exitSignal?.candleDataSource,
                 });
               } catch (saveErr) {
                 logError("saveExitRecord failed (non-fatal)", saveErr);

@@ -21,6 +21,7 @@ export interface IndicatorSnapshot {
   macd: MACDData;
   price: number;
   timestamp: number;
+  candleDataSource?: "GMGN" | "DEXPAPRIKA";
 }
 
 export function calculateRawRSI(closes: number[], period: number): number[] {
@@ -150,7 +151,10 @@ export function calculateMACD(
   return { macdLine: macd, signalLine: sig, histogram };
 }
 
-export function checkExitConditions(candles: Candle[]): IndicatorSnapshot {
+export function checkExitConditions(
+  candles: Candle[],
+  candleDataSource?: "GMGN" | "DEXPAPRIKA"
+): IndicatorSnapshot {
   const closes = candles.map((c) => c.close);
   const lastCandle = candles[candles.length - 1];
   const price = lastCandle.close;
@@ -162,6 +166,7 @@ export function checkExitConditions(candles: Candle[]): IndicatorSnapshot {
     macd: { macdLine: 0, signalLine: 0, histogram: 0 },
     price,
     timestamp: lastCandle.timestamp,
+    candleDataSource,
   };
 
   let rsiValue: number;
@@ -205,5 +210,6 @@ export function checkExitConditions(candles: Candle[]): IndicatorSnapshot {
     macd,
     price,
     timestamp: lastCandle.timestamp,
+    candleDataSource,
   };
 }

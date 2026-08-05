@@ -24,6 +24,7 @@ export interface ExitRecord {
   swapSuccess: boolean | null;
   swapReason: string | null;
   estimated?: boolean;
+  candleDataSource?: "GMGN" | "DEXPAPRIKA";
 }
 
 const HISTORY_FILE = path.resolve(__dirname, "..", "logs", "exit-history.json");
