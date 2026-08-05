@@ -311,6 +311,14 @@ export async function startMonitor(): Promise<void> {
     } else if (!positionCreatedAt.has(key)) {
       positionCreatedAt.set(key, p.openedAtMs ?? Date.now());
     }
+    if (p.openedAtMs !== undefined && Date.now() - p.openedAtMs < 60_000) {
+      lastDepositChangeMs.set(key, Date.now());
+      log("INFO", "New position detected; HSL grace period started", {
+        positionAddress: key,
+        openedAtMs: p.openedAtMs,
+        ageMs: Date.now() - p.openedAtMs,
+      });
+    }
     updatePeakPnl(p);
     return { position: p, state: "MONITORING" as PositionState };
   }));
@@ -414,6 +422,10 @@ export async function startMonitor(): Promise<void> {
             state: "MONITORING",
           });
           log("INFO", "New position detected", {
+            positionAddress: pos.positionPubkey.toBase58(),
+          });
+          lastDepositChangeMs.set(key, Date.now());
+          log("INFO", "New position detected; HSL grace period started", {
             positionAddress: pos.positionPubkey.toBase58(),
           });
         }
