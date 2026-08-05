@@ -94,6 +94,19 @@ function formatConsoleMessage(message: string, meta?: Record<string, unknown>): 
         ? "OOR-L"
         : "IN";
     const indicator = meta.shouldExit ? "RSI_BB=YES" : "RSI_BB=no";
+    const macd = meta.macdRuleEnabled === false
+      ? "MACD=off"
+      : meta.macdGreen
+        ? "MACD=YES"
+        : "MACD=no";
+    const hsl = meta.hardStopLossRuleEnabled === false
+      ? "HSL=off"
+      : meta.hardStopLossExit
+        ? "HSL=YES"
+        : meta.inDepositGrace
+          ? "HSL=grace"
+          : "HSL=no";
+    const minPnl = meta.indicatorPnlOk ? "minPNL=ok" : "minPNL=no";
     const trailing = meta.trailingTp === "ON"
       ? `TRAIL=ON drop=${fmtPct(meta.trailingDropPercent)}/${fmtPct(meta.trailingDropThreshold)}`
       : "TRAIL=off";
@@ -106,6 +119,9 @@ function formatConsoleMessage(message: string, meta?: Record<string, unknown>): 
       `RSI ${fmtNum(meta.rsi, 2)}`,
       `price ${meta.price ?? "?"}`,
       indicator,
+      macd,
+      hsl,
+      minPnl,
       trailing,
       cooldown,
       `src=${meta.pnlSource ?? "?"}`,

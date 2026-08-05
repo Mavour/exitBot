@@ -522,48 +522,6 @@ export async function startMonitor(): Promise<void> {
           const cooldownPassed = positionAgeMs >= CONFIG.exitCooldownMs;
           const ageSource = pos.openedAtMs ? "meteora_created_at" : "agent_first_seen";
 
-          log("INFO", `Position ${posKey.slice(0, 8)}...`, {
-            rsi: snapshot.rsi.toFixed(2),
-            bbUpper: snapshot.bb.upper.toFixed(8),
-            bbMiddle: snapshot.bb.middle.toFixed(8),
-            bbLower: snapshot.bb.lower.toFixed(8),
-            bbExitBand: CONFIG.bbExitBand,
-            bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
-            macdLine: snapshot.macd.macdLine.toFixed(8),
-            macdSignal: snapshot.macd.signalLine.toFixed(8),
-            macdHistogram: snapshot.macd.histogram.toFixed(8),
-            macdGreen: snapshot.shouldExitMacd,
-            price: snapshot.price.toFixed(8),
-            shouldExit: snapshot.shouldExit,
-            isOORRight: pos.isOORRight,
-            isOORLeft: pos.isOORLeft,
-            currentPnlSol: pos.pnl?.pnlSol ?? null,
-            currentPnlPercent: pos.pnl?.pnlPercent ?? null,
-            pnlSource: pos.pnl?.source ?? null,
-            peakPnlSol: peakPnl?.pnlSol ?? null,
-            peakPnlPercent: peakPnl?.pnlPercent ?? null,
-            peakPnlAt: peakPnl?.timestamp ?? null,
-            trailingTp: trailingArmed ? "ON" : "OFF",
-            trailingArmed,
-            shouldTrailingExit,
-            trailingDropPercent,
-            trailingArmPercent: CONFIG.trailingArmPercent,
-            trailingDropThreshold: CONFIG.trailingDropPercent,
-            positionAgeSeconds: Math.floor(positionAgeMs / 1000),
-            cooldownSeconds: Math.floor(CONFIG.exitCooldownMs / 1000),
-            cooldownPassed,
-            ageSource,
-          });
-
-          // If RSI is 0, indicators couldn't be computed (not enough data)
-          if (snapshot.rsi === 0 && snapshot.bb.upper === 0) {
-            log("WARN", `Insufficient data for position ${posKey.slice(0, 8)}...`, {
-              candlesCount: candles.length,
-              price: snapshot.price.toFixed(8),
-            });
-            continue;
-          }
-
           const prevDepositValueSol = lastDepositValueSol.get(posKey);
           if (pos.pnl?.depositValueSol && prevDepositValueSol && pos.pnl.depositValueSol > prevDepositValueSol * 1.05) {
             lastDepositChangeMs.set(posKey, Date.now());
@@ -599,6 +557,53 @@ export async function startMonitor(): Promise<void> {
                   ? "RSI_MACD"
                   : null;
           const exitBypassesCooldown = exitTrigger === "HARD_STOP_LOSS";
+
+          log("INFO", `Position ${posKey.slice(0, 8)}...`, {
+            rsi: snapshot.rsi.toFixed(2),
+            bbUpper: snapshot.bb.upper.toFixed(8),
+            bbMiddle: snapshot.bb.middle.toFixed(8),
+            bbLower: snapshot.bb.lower.toFixed(8),
+            bbExitBand: CONFIG.bbExitBand,
+            bbExitPrice: snapshot.bb[CONFIG.bbExitBand].toFixed(8),
+            macdLine: snapshot.macd.macdLine.toFixed(8),
+            macdSignal: snapshot.macd.signalLine.toFixed(8),
+            macdHistogram: snapshot.macd.histogram.toFixed(8),
+            macdGreen: snapshot.shouldExitMacd,
+            price: snapshot.price.toFixed(8),
+            shouldExit: snapshot.shouldExit,
+            hardStopLossExit: shouldHardStopLossExit,
+            inDepositGrace,
+            indicatorPnlOk: indicatorExitPnlOk,
+            macdRuleEnabled: CONFIG.macdEnabled,
+            hardStopLossRuleEnabled: CONFIG.hardStopLossEnabled,
+            isOORRight: pos.isOORRight,
+            isOORLeft: pos.isOORLeft,
+            currentPnlSol: pos.pnl?.pnlSol ?? null,
+            currentPnlPercent: pos.pnl?.pnlPercent ?? null,
+            pnlSource: pos.pnl?.source ?? null,
+            peakPnlSol: peakPnl?.pnlSol ?? null,
+            peakPnlPercent: peakPnl?.pnlPercent ?? null,
+            peakPnlAt: peakPnl?.timestamp ?? null,
+            trailingTp: trailingArmed ? "ON" : "OFF",
+            trailingArmed,
+            shouldTrailingExit,
+            trailingDropPercent,
+            trailingArmPercent: CONFIG.trailingArmPercent,
+            trailingDropThreshold: CONFIG.trailingDropPercent,
+            positionAgeSeconds: Math.floor(positionAgeMs / 1000),
+            cooldownSeconds: Math.floor(CONFIG.exitCooldownMs / 1000),
+            cooldownPassed,
+            ageSource,
+          });
+
+          // If RSI is 0, indicators couldn't be computed (not enough data)
+          if (snapshot.rsi === 0 && snapshot.bb.upper === 0) {
+            log("WARN", `Insufficient data for position ${posKey.slice(0, 8)}...`, {
+              candlesCount: candles.length,
+              price: snapshot.price.toFixed(8),
+            });
+            continue;
+          }
 
           if ((snapshot.shouldExit || snapshot.shouldExitMacd) && !indicatorExitPnlOk) {
             log("INFO", "Indicator exit signal ignored below minimum PNL", {
