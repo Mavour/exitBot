@@ -33,7 +33,7 @@ import {
 } from "./manual-close-cache";
 
 const REQUIRED_CANDLES = 60;
-const POSITION_REFETCH_INTERVAL = 1;
+const IDLE_REFETCH_INTERVAL_CYCLES = 3; // ~30s with pollIntervalMs default 10000ms
 
 type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
 type ExitTriggerType = "HARD_STOP_LOSS" | "RSI_BB" | "RSI_MACD" | "TRAILING_PROFIT";
@@ -79,6 +79,7 @@ export interface PositionSnapshot {
 export let lastPositionSnapshots: PositionSnapshot[] = [];
 
 let isShuttingDown = false;
+let lastMonitorMode: "idle" | "active" | null = null;
 const inFlightSet = new Set<string>();
 const oorRightLastNotified = new Map<string, number>();
 const oorLeftLastNotified = new Map<string, number>();
@@ -366,8 +367,24 @@ export async function startMonitor(): Promise<void> {
       inFlight: inFlightSet.size,
     });
 
-    // Refresh Meteora position/PNL data every poll.
-    const shouldRefetch = pollCycle % POSITION_REFETCH_INTERVAL === 0;
+    // Refresh Meteora position/PNL data every poll while positions are active;
+    // throttle to every IDLE_REFETCH_INTERVAL_CYCLES when there are no active positions.
+    const hasActivePositions = trackedPositions.some(
+      (t) => t.state !== "EXITED"
+    );
+    const monitorMode: "idle" | "active" = hasActivePositions
+      ? "active"
+      : "idle";
+    if (lastMonitorMode !== monitorMode) {
+      log("INFO", "Position monitoring mode changed", {
+        from: lastMonitorMode ?? "idle",
+        to: monitorMode,
+      });
+      lastMonitorMode = monitorMode;
+    }
+    const shouldRefetch = hasActivePositions
+      ? true // full-speed every cycle when positions are active — do not slow this down
+      : pollCycle % IDLE_REFETCH_INTERVAL_CYCLES === 0; // throttle only when idle
     if (shouldRefetch) {
       log("INFO", "Re-fetching position list");
       try {
