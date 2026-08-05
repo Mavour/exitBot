@@ -98,6 +98,16 @@ test("renderRangeBar shows OOR markers outside range", async () => {
   assert.equal(renderRangeBar(25, 10, 20), "─".repeat(18) + "●▶"); // ratio > 1
 });
 
+test("shortenAddress truncates long addresses and keeps short ones", async () => {
+  const { shortenAddress } = await loadTelegram();
+  assert.equal(
+    shortenAddress("BjDeuiLL4oR5NQJj6hzRkH9nzJmku1VWvbJq74rZBnv1"),
+    "BjDeuiLL...Bnv1"
+  );
+  assert.equal(shortenAddress("Short12"), "Short12");
+  assert.equal(shortenAddress("12345678901234"), "12345678901234");
+});
+
 test("renderRangeBar returns neutral bar on missing data", async () => {
   const { renderRangeBar } = await loadRangeBar();
   assert.equal(renderRangeBar(null, 10, 20), "─".repeat(20));

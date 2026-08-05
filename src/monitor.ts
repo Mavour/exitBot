@@ -736,7 +736,8 @@ export async function startMonitor(): Promise<void> {
           () =>
             notifyExitStarted({
               positionAddress: posKey,
-              poolAddress: pos.poolAddress.toBase58(),
+              tokenXSymbol: pos.tokenXSymbol,
+              tokenYSymbol: pos.tokenYSymbol,
               trigger: exitTriggerType,
               pnl: pos.pnl,
               peakPnlSol: peakPnl?.pnlSol,
@@ -855,7 +856,8 @@ export async function startMonitor(): Promise<void> {
                 () =>
                   notifyPositionClosedExternally({
                     positionAddress: posKey,
-                    poolAddress: pos.poolAddress.toBase58(),
+                    tokenXSymbol: pos.tokenXSymbol,
+                    tokenYSymbol: pos.tokenYSymbol,
                     reason: result.closeReason ?? "Position already closed externally/manual",
                   }),
                 "external close"

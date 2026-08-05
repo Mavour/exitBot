@@ -3,7 +3,7 @@ import { log, logError } from "./logger";
 import { CONFIG } from "./config";
 import { PNLData } from "./position-fetcher";
 import { SwapResult } from "./jupiter-swap";
-import { escapeHtml } from "./telegram-format";
+import { escapeHtml, shortenAddress } from "./telegram-format";
 import { renderRangeBar } from "./range-bar";
 import {
   handleMenuCommand,
@@ -177,7 +177,7 @@ export async function notifyOORRight(params: {
   const msg = [
     "<b>⚠️ OUT OF RANGE — RIGHT</b>",
     "",
-    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Position:</b> ${code(shortenAddress(params.positionAddress))}`,
     `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
     `<code>${renderRangeBar(params.activeBinId, params.fromBinId, params.toBinId)}</code>`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
@@ -203,7 +203,7 @@ export async function notifyOORLeft(params: {
   const msg = [
     "<b>⚠️ OUT OF RANGE — LEFT</b>",
     "",
-    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Position:</b> ${code(shortenAddress(params.positionAddress))}`,
     `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
     `<code>${renderRangeBar(params.activeBinId, params.fromBinId, params.toBinId)}</code>`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
@@ -229,7 +229,7 @@ export async function notifyOORUnknown(params: {
   const msg = [
     "<b>⚠️ OUT OF RANGE — DIRECTION UNKNOWN</b>",
     "",
-    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Position:</b> ${code(shortenAddress(params.positionAddress))}`,
     `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
     `<code>${renderRangeBar(params.activeBinId, params.fromBinId, params.toBinId)}</code>`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
@@ -255,7 +255,7 @@ export async function notifyBackInRange(params: {
   const msg = [
     "<b>✅ BACK IN RANGE</b>",
     "",
-    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Position:</b> ${code(shortenAddress(params.positionAddress))}`,
     `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
     `<code>${renderRangeBar(params.activeBinId, params.fromBinId, params.toBinId)}</code>`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
@@ -297,7 +297,7 @@ export async function notifyExitSuccess(params: {
   const lines: string[] = [
     `<b>${label}</b>`,
     "",
-    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Position:</b> ${code(shortenAddress(params.positionAddress))}`,
   ];
 
   if (params.closeAttribution) {
@@ -415,7 +415,8 @@ export async function notifyExitSuccess(params: {
 
 export async function notifyExitStarted(params: {
   positionAddress: string;
-  poolAddress: string;
+  tokenXSymbol: string;
+  tokenYSymbol: string;
   trigger: "HARD_STOP_LOSS" | "RSI_BB" | "RSI_MACD" | "TRAILING_PROFIT";
   pnl: PNLData | null;
   peakPnlSol?: number;
@@ -447,8 +448,8 @@ export async function notifyExitStarted(params: {
   const lines = [
     `<b>${params.dryRun ? "EXIT SIMULATION STARTED" : "EXIT STARTED"}</b>`,
     "",
-    `<b>Position:</b> ${code(params.positionAddress)}`,
-    `<b>Pool:</b> ${code(params.poolAddress)}`,
+    `<b>Position:</b> ${code(shortenAddress(params.positionAddress))}`,
+    `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
     `<b>Trigger:</b> ${triggerLabel}`,
       `<b>Reason:</b> ${escapeHtml(reason)}`,
   ];
@@ -487,7 +488,7 @@ export async function notifyExitFailed(params: {
   const msg = [
     "<b>❌ EXIT FAILED</b>",
     "",
-    `<b>Position:</b> ${code(params.positionAddress)}`,
+    `<b>Position:</b> ${code(shortenAddress(params.positionAddress))}`,
     `<b>Error:</b> ${escapeHtml(params.error.slice(0, 500))}`,
   ].join("\n");
   await sendMessage(msg);
@@ -495,15 +496,16 @@ export async function notifyExitFailed(params: {
 
 export async function notifyPositionClosedExternally(params: {
   positionAddress: string;
-  poolAddress: string;
+  tokenXSymbol: string;
+  tokenYSymbol: string;
   reason: string;
 }): Promise<void> {
   if (!enabled) return;
   const msg = [
     "<b>POSITION ALREADY CLOSED</b>",
     "",
-    `<b>Position:</b> ${code(params.positionAddress)}`,
-    `<b>Pool:</b> ${code(params.poolAddress)}`,
+    `<b>Position:</b> ${code(shortenAddress(params.positionAddress))}`,
+    `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
     "<b>Close source:</b> MANUAL_EXTERNAL",
     `<b>Reason:</b> ${escapeHtml(params.reason)}`,
     "",

@@ -6,7 +6,7 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { getExitHistory, ExitRecord } from "./exit-history";
 import { getTrackedPositionsSnapshot } from "./tracked-state";
 import { renderRangeBar } from "./range-bar";
-import { escapeHtml } from "./telegram-format";
+import { escapeHtml, shortenAddress } from "./telegram-format";
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
@@ -641,7 +641,7 @@ export async function handlePositionsCommand(chatId: number): Promise<void> {
 
   for (const pos of positions) {
     const positionAddress = pos.positionPubkey.toBase58();
-    const shortPos = positionAddress.slice(0, 8) + "..." + positionAddress.slice(-4);
+    const shortPos = shortenAddress(positionAddress);
     const isOOR = !pos.isInRange;
     const pnlMissing = pos.pnl === null || pos.pnl === undefined;
 
