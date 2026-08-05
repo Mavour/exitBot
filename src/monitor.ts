@@ -13,6 +13,12 @@ import { executeFullExit, ExitResult } from "./exit-executor";
 import { log, logError } from "./logger";
 import { withRpcFallback } from "./rpc-manager";
 import {
+  setTrackedPositions,
+  getTrackedPositions,
+  TrackedPosition,
+  PositionState,
+} from "./tracked-state";
+import {
   notifyAgentStart,
   notifyExitSuccess,
   notifyExitStarted,
@@ -35,34 +41,8 @@ import {
 const REQUIRED_CANDLES = 60;
 const IDLE_REFETCH_INTERVAL_CYCLES = 3; // ~30s with pollIntervalMs default 10000ms
 
-type PositionState = "MONITORING" | "EXIT_TRIGGERED" | "EXITING" | "EXITED";
-type ExitTriggerType = "HARD_STOP_LOSS" | "RSI_BB" | "RSI_MACD" | "TRAILING_PROFIT";
-type BBExitBand = "upper" | "middle" | "lower";
-
-interface ExitSignalContext {
-  triggerType: ExitTriggerType;
-  rsi: number;
-  price: number;
-  bbExitBand: BBExitBand;
-  bbExitPrice: number;
-  peakPnlSol?: number;
-  peakPnlPercent?: number;
-  trailingDropPercent?: number;
-  macdLine?: number;
-  macdSignal?: number;
-  macdHistogram?: number;
-  candleDataSource?: "GMGN" | "DEXPAPRIKA";
-}
-
 function safeNotify(fn: () => Promise<void>, label: string): void {
   fn().catch((err) => logError(`${label} notify failed`, err));
-}
-
-interface TrackedPosition {
-  position: ActivePosition;
-  state: PositionState;
-  exitTriggerType?: ExitTriggerType;
-  exitSignal?: ExitSignalContext;
 }
 
 export interface PositionSnapshot {
@@ -206,7 +186,11 @@ function handleRangeNotifications(pos: ActivePosition, posKey: string): void {
         () =>
           notifyOORRight({
             positionAddress: posKey,
-            poolAddress: pos.poolAddress.toBase58(),
+            tokenXSymbol: pos.tokenXSymbol,
+            tokenYSymbol: pos.tokenYSymbol,
+            activeBinId: pos.activeBinId,
+            fromBinId: pos.binRange.fromBinId,
+            toBinId: pos.binRange.toBinId,
             rsi: indicator?.rsi,
             bbUpper: indicator?.bb.upper,
             price,
@@ -228,7 +212,11 @@ function handleRangeNotifications(pos: ActivePosition, posKey: string): void {
         () =>
           notifyOORLeft({
             positionAddress: posKey,
-            poolAddress: pos.poolAddress.toBase58(),
+            tokenXSymbol: pos.tokenXSymbol,
+            tokenYSymbol: pos.tokenYSymbol,
+            activeBinId: pos.activeBinId,
+            fromBinId: pos.binRange.fromBinId,
+            toBinId: pos.binRange.toBinId,
             rsi: indicator?.rsi,
             bbUpper: indicator?.bb.upper,
             price,
@@ -248,7 +236,11 @@ function handleRangeNotifications(pos: ActivePosition, posKey: string): void {
       () =>
         notifyOORUnknown({
           positionAddress: posKey,
-          poolAddress: pos.poolAddress.toBase58(),
+          tokenXSymbol: pos.tokenXSymbol,
+          tokenYSymbol: pos.tokenYSymbol,
+          activeBinId: pos.activeBinId,
+          fromBinId: pos.binRange.fromBinId,
+          toBinId: pos.binRange.toBinId,
           rsi: indicator?.rsi,
           bbUpper: indicator?.bb.upper,
           price,
@@ -270,7 +262,11 @@ function handleRangeNotifications(pos: ActivePosition, posKey: string): void {
       () =>
         notifyBackInRange({
           positionAddress: posKey,
-          poolAddress: pos.poolAddress.toBase58(),
+          tokenXSymbol: pos.tokenXSymbol,
+          tokenYSymbol: pos.tokenYSymbol,
+          activeBinId: pos.activeBinId,
+          fromBinId: pos.binRange.fromBinId,
+          toBinId: pos.binRange.toBinId,
           rsi: indicator?.rsi,
           bbUpper: indicator?.bb.upper,
           price,
@@ -293,7 +289,6 @@ export async function startMonitor(): Promise<void> {
 
   await logWalletInfo();
 
-  let trackedPositions: TrackedPosition[] = [];
   let pollCycle = 0;
 
   // Fetch & resolve on startup
@@ -309,7 +304,7 @@ export async function startMonitor(): Promise<void> {
   restorePeakPnlFromSnapshots();
   await recordClosedSnapshots(initialPositions);
 
-  trackedPositions = initialPositions.map((p) => {
+  setTrackedPositions(initialPositions.map((p) => {
     const key = p.positionPubkey.toBase58();
     if (p.openedAtMs !== undefined) {
       positionCreatedAt.set(key, p.openedAtMs);
@@ -318,12 +313,12 @@ export async function startMonitor(): Promise<void> {
     }
     updatePeakPnl(p);
     return { position: p, state: "MONITORING" as PositionState };
-  });
+  }));
 
   safeNotify(
     () =>
       notifyAgentStart({
-        positionsCount: trackedPositions.length,
+        positionsCount: getTrackedPositions().length,
         dryRun: CONFIG.dryRun,
         rsiThreshold: CONFIG.rsiThreshold,
         pollIntervalMs: CONFIG.pollIntervalMs,
@@ -342,7 +337,7 @@ export async function startMonitor(): Promise<void> {
   );
 
   log("INFO", "Monitor started", {
-    positionsCount: trackedPositions.length,
+    positionsCount: getTrackedPositions().length,
     dryRun: CONFIG.dryRun,
     rsiPeriod: CONFIG.rsiPeriod,
     rsiThreshold: CONFIG.rsiThreshold,
@@ -363,13 +358,13 @@ export async function startMonitor(): Promise<void> {
   while (!isShuttingDown) {
     pollCycle++;
     log("INFO", `Poll cycle ${pollCycle}`, {
-      monitored: trackedPositions.filter((t) => t.state !== "EXITED").length,
+      monitored: getTrackedPositions().filter((t) => t.state !== "EXITED").length,
       inFlight: inFlightSet.size,
     });
 
     // Refresh Meteora position/PNL data every poll while positions are active;
     // throttle to every IDLE_REFETCH_INTERVAL_CYCLES when there are no active positions.
-    const hasActivePositions = trackedPositions.some(
+    const hasActivePositions = getTrackedPositions().some(
       (t) => t.state !== "EXITED"
     );
     const monitorMode: "idle" | "active" = hasActivePositions
@@ -403,7 +398,7 @@ export async function startMonitor(): Promise<void> {
           }
 
           updatePeakPnl(pos);
-          const existing = trackedPositions.find(
+          const existing = getTrackedPositions().find(
             (t) =>
               t.position.positionPubkey.toBase58() ===
               pos.positionPubkey.toBase58()
@@ -414,7 +409,7 @@ export async function startMonitor(): Promise<void> {
             }
             continue;
           }
-          trackedPositions.push({
+          getTrackedPositions().push({
             position: pos,
             state: "MONITORING",
           });
@@ -427,7 +422,7 @@ export async function startMonitor(): Promise<void> {
           freshPositions.map((p) => p.positionPubkey.toBase58())
         );
         const nextTrackedPositions: TrackedPosition[] = [];
-        for (const t of trackedPositions) {
+        for (const t of getTrackedPositions()) {
           if (t.state === "EXITED") continue;
           const key = t.position.positionPubkey.toBase58();
           if (!freshKeys.has(key) && t.state === "MONITORING") {
@@ -452,14 +447,14 @@ export async function startMonitor(): Promise<void> {
           }
           nextTrackedPositions.push(t);
         }
-        trackedPositions = nextTrackedPositions;
+        setTrackedPositions(nextTrackedPositions);
       } catch (err) {
         logError("Failed to re-fetch positions, using cached data", err);
       }
     }
 
     // Process each position
-    for (const tracked of trackedPositions) {
+    for (const tracked of getTrackedPositions()) {
       if (isShuttingDown) break;
 
       const pos = tracked.position;
@@ -896,21 +891,21 @@ export async function startMonitor(): Promise<void> {
     }
 
     // Check if all done
-    const remaining = trackedPositions.filter(
+    const remaining = getTrackedPositions().filter(
       (t) => t.state !== "EXITED"
     );
-    if (remaining.length === 0 && trackedPositions.length > 0) {
+    if (remaining.length === 0 && getTrackedPositions().length > 0) {
       log("EXIT", "All positions exited. Agent shutting down.");
       await handleShutdown();
       break;
     }
 
-    if (trackedPositions.length === 0) {
+    if (getTrackedPositions().length === 0) {
       log("INFO", "No positions to monitor");
     }
 
     // Rebuild snapshots for /positions command
-    lastPositionSnapshots = trackedPositions
+    lastPositionSnapshots = getTrackedPositions()
       .filter((t) => t.state !== "EXITED")
       .map((t) => {
         const key = t.position.positionPubkey.toBase58();

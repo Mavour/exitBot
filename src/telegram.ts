@@ -4,6 +4,7 @@ import { CONFIG } from "./config";
 import { PNLData } from "./position-fetcher";
 import { SwapResult } from "./jupiter-swap";
 import { escapeHtml } from "./telegram-format";
+import { renderRangeBar } from "./range-bar";
 import {
   handleMenuCommand,
   handleStatusCommand,
@@ -163,7 +164,11 @@ export async function notifyAgentStart(params: {
 
 export async function notifyOORRight(params: {
   positionAddress: string;
-  poolAddress: string;
+  tokenXSymbol: string;
+  tokenYSymbol: string;
+  activeBinId: number | null;
+  fromBinId: number;
+  toBinId: number;
   rsi?: number;
   bbUpper?: number;
   price?: number;
@@ -173,7 +178,8 @@ export async function notifyOORRight(params: {
     "<b>⚠️ OUT OF RANGE — RIGHT</b>",
     "",
     `<b>Position:</b> ${code(params.positionAddress)}`,
-    `<b>Pool:</b> ${code(params.poolAddress)}`,
+    `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
+    `<code>${renderRangeBar(params.activeBinId, params.fromBinId, params.toBinId)}</code>`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
     `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
     `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
@@ -184,7 +190,11 @@ export async function notifyOORRight(params: {
 
 export async function notifyOORLeft(params: {
   positionAddress: string;
-  poolAddress: string;
+  tokenXSymbol: string;
+  tokenYSymbol: string;
+  activeBinId: number | null;
+  fromBinId: number;
+  toBinId: number;
   rsi?: number;
   bbUpper?: number;
   price?: number;
@@ -194,7 +204,8 @@ export async function notifyOORLeft(params: {
     "<b>⚠️ OUT OF RANGE — LEFT</b>",
     "",
     `<b>Position:</b> ${code(params.positionAddress)}`,
-    `<b>Pool:</b> ${code(params.poolAddress)}`,
+    `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
+    `<code>${renderRangeBar(params.activeBinId, params.fromBinId, params.toBinId)}</code>`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
     `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
     `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
@@ -205,7 +216,11 @@ export async function notifyOORLeft(params: {
 
 export async function notifyOORUnknown(params: {
   positionAddress: string;
-  poolAddress: string;
+  tokenXSymbol: string;
+  tokenYSymbol: string;
+  activeBinId: number | null;
+  fromBinId: number;
+  toBinId: number;
   rsi?: number;
   bbUpper?: number;
   price?: number;
@@ -215,7 +230,8 @@ export async function notifyOORUnknown(params: {
     "<b>⚠️ OUT OF RANGE — DIRECTION UNKNOWN</b>",
     "",
     `<b>Position:</b> ${code(params.positionAddress)}`,
-    `<b>Pool:</b> ${code(params.poolAddress)}`,
+    `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
+    `<code>${renderRangeBar(params.activeBinId, params.fromBinId, params.toBinId)}</code>`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
     `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
     `<b>Price:</b> ${formatOptionalNumber(params.price)}`,
@@ -226,7 +242,11 @@ export async function notifyOORUnknown(params: {
 
 export async function notifyBackInRange(params: {
   positionAddress: string;
-  poolAddress: string;
+  tokenXSymbol: string;
+  tokenYSymbol: string;
+  activeBinId: number | null;
+  fromBinId: number;
+  toBinId: number;
   rsi?: number;
   bbUpper?: number;
   price?: number;
@@ -236,7 +256,8 @@ export async function notifyBackInRange(params: {
     "<b>✅ BACK IN RANGE</b>",
     "",
     `<b>Position:</b> ${code(params.positionAddress)}`,
-    `<b>Pool:</b> ${code(params.poolAddress)}`,
+    `<b>Pair:</b> ${escapeHtml(params.tokenXSymbol)}/${escapeHtml(params.tokenYSymbol)}`,
+    `<code>${renderRangeBar(params.activeBinId, params.fromBinId, params.toBinId)}</code>`,
     `<b>RSI(2):</b> ${formatOptionalNumber(params.rsi, 2)}`,
     `<b>BB Upper:</b> ${formatOptionalNumber(params.bbUpper)}`,
     `<b>Price:</b> ${formatOptionalNumber(params.price)}`,

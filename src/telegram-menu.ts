@@ -4,6 +4,9 @@ import { wallet } from "./wallet";
 import { connection } from "./wallet";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { getExitHistory, ExitRecord } from "./exit-history";
+import { getTrackedPositionsSnapshot } from "./tracked-state";
+import { renderRangeBar } from "./range-bar";
+import { escapeHtml } from "./telegram-format";
 import path from "path";
 import fs from "fs";
 import { execSync } from "child_process";
@@ -626,51 +629,49 @@ export async function handlePositionsCommand(chatId: number): Promise<void> {
 
   await sendTelegramMessage("🔄 Fetching positions...", String(chatId));
 
-  try {
-    const url = `https://dlmm.datapi.meteora.ag/portfolio/open?user=${wallet.publicKey.toBase58()}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
-    const data = (await res.json()) as any;
-    const pools = data?.pools ?? [];
-    const totalPositions = data?.total?.totalPositions ?? 0;
+  const positions = getTrackedPositionsSnapshot();
 
-    if (totalPositions === 0 || pools.length === 0) {
-      await sendTelegramMessage("📍 No active positions being monitored.", String(chatId));
-      return;
-    }
+  if (positions.length === 0) {
+    await sendTelegramMessage("📍 No active positions being monitored.", String(chatId));
+    return;
+  }
 
-    let totalValue = 0;
-    const lines: string[] = [`<b>📍 Active Positions (${totalPositions})</b>`, ""];
+  let totalValue = 0;
+  const lines: string[] = [`<b>📍 Active Positions (${positions.length})</b>`, ""];
 
-    for (const pool of pools) {
-      const posAddr = pool.listPositions?.[0] ?? "N/A";
-      const shortPos = posAddr.slice(0, 8) + "..." + posAddr.slice(-4);
-      const pnlSol = parseFloat(pool.pnlSol ?? "0");
-      const pnlPct = parseFloat(pool.pnlSolPctChange ?? "0");
-      const balanceSol = parseFloat(pool.balancesSol ?? "0");
-      const feesSol = parseFloat(pool.unclaimedFeesSol ?? "0");
-      const isOOR = pool.outOfRange === true;
+  for (const pos of positions) {
+    const positionAddress = pos.positionPubkey.toBase58();
+    const shortPos = positionAddress.slice(0, 8) + "..." + positionAddress.slice(-4);
+    const isOOR = !pos.isInRange;
+    const pnlMissing = pos.pnl === null || pos.pnl === undefined;
 
-      totalValue += balanceSol;
+    const balance = pos.pnl?.currentValueSol ?? 0;
+    const pnlSol = pos.pnl?.pnlSol ?? 0;
+    const pnlPct = pos.pnl?.pnlPercent ?? 0;
+    const fees = pos.pnl?.totalFeeEarnedSol ?? 0;
 
-      lines.push(
-        `<b>${pool.tokenX ?? "?"}/${pool.tokenY ?? "?"}</b>`,
-        `   Position: <code>${shortPos}</code>`,
-        `   Balance: ${balanceSol.toFixed(4)} SOL`,
-        `   PNL: ${pnlSol >= 0 ? "🟢 +" : "🔴 "}${pnlSol.toFixed(7)} SOL (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(4)}%)`,
-        `   Fees: ${feesSol.toFixed(6)} SOL`,
-        `   Status: ${isOOR ? "⚠️ Out of Range" : "✅ In Range"}`,
-        `   ${"─".repeat(16)}`,
-      );
-    }
+    totalValue += balance;
 
-    lines.push(`💼 <b>Total Value: ${totalValue.toFixed(4)} SOL</b>`);
-    await sendTelegramMessage(lines.join("\n"), String(chatId));
-  } catch (err) {
-    await sendTelegramMessage(
-      `❌ Failed to fetch positions\nError: ${String(err).slice(0, 100)}`,
-      String(chatId)
+    lines.push(
+      `<b>${escapeHtml(pos.tokenXSymbol)}/${escapeHtml(pos.tokenYSymbol)}</b>`,
+      `   Position: <code>${escapeHtml(shortPos)}</code>`,
+      pnlMissing
+        ? `   Balance: N/A`
+        : `   Balance: ${balance.toFixed(4)} SOL`,
+      pnlMissing
+        ? `   PNL: N/A`
+        : `   PNL: ${pnlSol >= 0 ? "🟢 +" : "🔴 "}${pnlSol.toFixed(7)} SOL (${pnlPct >= 0 ? "+" : ""}${pnlPct.toFixed(4)}%)`,
+      pnlMissing
+        ? `   Fees: N/A`
+        : `   Fees: ${fees.toFixed(6)} SOL`,
+      `   Status: ${isOOR ? "⚠️ Out of Range" : "✅ In Range"}`,
+      `   <code>${renderRangeBar(pos.activeBinId, pos.binRange.fromBinId, pos.binRange.toBinId)}</code>`,
+      `   ${"─".repeat(16)}`,
     );
   }
+
+  lines.push(`💼 <b>Total Value: ${totalValue.toFixed(4)} SOL</b>`);
+  await sendTelegramMessage(lines.join("\n"), String(chatId));
 }
 
 const ITEMS_PER_PAGE = 10;

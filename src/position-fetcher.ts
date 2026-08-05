@@ -32,6 +32,7 @@ export interface ActivePosition {
   unclaimedFeesX: string;
   unclaimedFeesY: string;
   binRange: { fromBinId: number; toBinId: number };
+  activeBinId: number | null;
   pnl: PNLData | null;
   openedAtMs?: number;
 }
@@ -454,6 +455,7 @@ export async function fetchAllActivePositions(
           fromBinId: posInfo.lowerBinId,
           toBinId: posInfo.upperBinId,
         },
+        activeBinId,
         pnl,
         openedAtMs: parsePositionOpenedAtMs(positionPnlRow),
       });

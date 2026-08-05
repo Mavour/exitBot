@@ -12,6 +12,10 @@ async function loadTelegram() {
   return import("../src/telegram-format");
 }
 
+async function loadRangeBar() {
+  return import("../src/range-bar");
+}
+
 test("detects DLMM already-closed errors", async () => {
   const { isAlreadyClosedPositionError } = await loadExitExecutor();
   const cases = [
@@ -79,4 +83,23 @@ test("MACD requires enough data points", async () => {
   const { calculateMACD } = await import("../src/indicators");
   const closes = [100, 101, 102, 103, 104, 105];
   assert.throws(() => calculateMACD(closes, 12, 26, 9));
+});
+
+test("renderRangeBar places dot at correct in-range positions", async () => {
+  const { renderRangeBar } = await loadRangeBar();
+  assert.equal(renderRangeBar(10, 10, 20), "●" + "─".repeat(19)); // ratio 0
+  assert.equal(renderRangeBar(15, 10, 20), "─".repeat(10) + "●" + "─".repeat(9)); // ratio 0.5
+  assert.equal(renderRangeBar(20, 10, 20), "─".repeat(19) + "●"); // ratio 1
+});
+
+test("renderRangeBar shows OOR markers outside range", async () => {
+  const { renderRangeBar } = await loadRangeBar();
+  assert.equal(renderRangeBar(5, 10, 20), "◀●" + "─".repeat(18)); // ratio negative
+  assert.equal(renderRangeBar(25, 10, 20), "─".repeat(18) + "●▶"); // ratio > 1
+});
+
+test("renderRangeBar returns neutral bar on missing data", async () => {
+  const { renderRangeBar } = await loadRangeBar();
+  assert.equal(renderRangeBar(null, 10, 20), "─".repeat(20));
+  assert.equal(renderRangeBar(10, 10, 10), "─".repeat(20));
 });
