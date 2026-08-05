@@ -18,6 +18,17 @@ export interface OHLCCandle {
 const GMGN_BASE = "https://openapi.gmgn.ai";
 const DEXPAPRIKA_BASE = "https://api.dexpaprika.com";
 const MIN_CANDLES_REQUIRED = 20;
+const DEXPAPRIKA_VALID_INTERVALS = [
+  "1m",
+  "5m",
+  "10m",
+  "15m",
+  "30m",
+  "1h",
+  "6h",
+  "12h",
+  "24h",
+];
 
 function isRateLimitError(err: unknown): boolean {
   return (err as { status?: number })?.status === 429;
@@ -164,6 +175,14 @@ export async function getCandles(
     source = "GMGN";
   } catch (err) {
     if (isRateLimitError(err) && poolAddress) {
+      if (!DEXPAPRIKA_VALID_INTERVALS.includes(CONFIG.candleTimeframe)) {
+        log(
+          "WARN",
+          "DexPaprika fallback skipped: interval not supported",
+          { interval: CONFIG.candleTimeframe }
+        );
+        throw err;
+      }
       log("WARN", "GMGN rate limited, falling back to DexPaprika", {
         mint: tokenMint,
         poolAddress,
