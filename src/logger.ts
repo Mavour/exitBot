@@ -95,10 +95,8 @@ function formatConsoleMessage(message: string, meta?: Record<string, unknown>): 
         : "IN";
     const indicator = meta.shouldExit ? "RSI_BB=YES" : "RSI_BB=no";
     const macd = meta.macdRuleEnabled === false
-      ? "MACD=off"
-      : meta.macdGreen
-        ? "MACD=YES"
-        : "MACD=no";
+      ? "RSI_MACD=off"
+      : `RSI_MACD=${meta.macdGreen ? "YES" : "no"} hist=${meta.macdHistogram ?? "?"}`;
     const hsl = meta.hardStopLossRuleEnabled === false
       ? "HSL=off"
       : meta.hardStopLossExit
