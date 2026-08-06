@@ -38,6 +38,7 @@ function fallbackPnl(): PNLData {
     depositValueSol: 0,
     currentValueSol: 0,
     totalFeeEarnedSol: 0,
+    withdrawalValueSol: 0,
     pnlSol: 0,
     pnlPercent: 0,
   };

@@ -10,6 +10,7 @@ export interface PNLData {
   depositValueSol: number;
   currentValueSol: number;
   totalFeeEarnedSol: number;
+  withdrawalValueSol: number;
   pnlSol: number;
   pnlPercent: number;
   source?: "meteora_position_api" | "meteora_position_formula" | "meteora_portfolio";
@@ -96,7 +97,7 @@ function parsePortfolioPoolPNL(
 
     if (!Number.isFinite(pnlSol)) return null;
 
-    return { depositValueSol, currentValueSol, totalFeeEarnedSol, pnlSol, pnlPercent, source: "meteora_portfolio" };
+    return { depositValueSol, currentValueSol, totalFeeEarnedSol, withdrawalValueSol: 0, pnlSol, pnlPercent, source: "meteora_portfolio" };
   } catch {
     return null;
   }
@@ -127,7 +128,7 @@ function calculatePnl({
   claimableFees: unknown;
   claimedFees: unknown;
   deposits: unknown;
-}): { deposits: number; balance: number; claimableFees: number; claimedFees: number; pnl: number; pnlPct: number | null } {
+}): { deposits: number; balance: number; withdrawals: number; claimableFees: number; claimedFees: number; pnl: number; pnlPct: number | null } {
   const normalized = {
     balance: pnlNumber(balance),
     withdrawals: pnlNumber(withdrawals),
@@ -221,6 +222,7 @@ function parsePositionRowPNL(row: Record<string, any> | undefined): PNLData | nu
     depositValueSol: calculated.deposits,
     currentValueSol: calculated.balance,
     totalFeeEarnedSol: calculated.claimedFees + calculated.claimableFees,
+    withdrawalValueSol: calculated.withdrawals,
     pnlSol,
     pnlPercent,
     source: apiPnlSol !== null ? "meteora_position_api" : "meteora_position_formula",

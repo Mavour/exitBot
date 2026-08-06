@@ -68,6 +68,7 @@ const lastIndicatorData = new Map<string, { price: number; rsi: number; bb: Boll
 const positionCreatedAt = new Map<string, number>();
 const positionPeakPnl = new Map<string, { pnlSol: number; pnlPercent: number; timestamp: string }>();
 const lastDepositValueSol = new Map<string, number>();
+const lastWithdrawalValueSol = new Map<string, number>();
 const lastDepositChangeMs = new Map<string, number>();
 
 async function isPositionClosedOnChain(positionAddress: string): Promise<boolean> {
@@ -544,6 +545,22 @@ export async function startMonitor(): Promise<void> {
             });
           }
           if (pos.pnl?.depositValueSol) lastDepositValueSol.set(posKey, pos.pnl.depositValueSol);
+
+          const prevWithdrawalValueSol = lastWithdrawalValueSol.get(posKey);
+          if (
+            pos.pnl?.withdrawalValueSol !== undefined &&
+            prevWithdrawalValueSol !== undefined &&
+            pos.pnl.withdrawalValueSol > prevWithdrawalValueSol
+          ) {
+            lastDepositChangeMs.set(posKey, Date.now());
+            log("INFO", "Withdrawal detected; HSL grace period started", {
+              positionAddress: posKey,
+              previousWithdrawal: prevWithdrawalValueSol,
+              currentWithdrawal: pos.pnl.withdrawalValueSol,
+            });
+          }
+          lastWithdrawalValueSol.set(posKey, pos.pnl?.withdrawalValueSol ?? prevWithdrawalValueSol ?? 0);
+
           const inDepositGrace = lastDepositChangeMs.has(posKey) && (Date.now() - lastDepositChangeMs.get(posKey)!) < 60_000;
 
           const shouldHardStopLossExit =
